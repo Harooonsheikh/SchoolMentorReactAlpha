@@ -21,6 +21,7 @@ import { computeFeeExtrasFromLedger } from './feeDashboardLedger';
 import { effectivePermsForUser, MODULE_TREE } from '../UserPermissions/permissionsData';
 import * as dashboardService from '../../services/dashboardService';
 import { getBillingAnnouncements } from '../../services/billingAnnouncementsService';
+import { getUserNotifications, markNotificationRead } from '../../services/notificationService';
 import { buildStandardReportHtml } from '../../reports/reportKit';
 import {
   STUDENT_STATS,
@@ -1079,6 +1080,64 @@ const canSeeCard = useCallback(
     return () => { alive = false; };
   }, [needAnnouncements]);
 
+  /* Logged-in user's own notification inbox — same source the mobile app reads
+     (AHM_Notification/user/{loginUserId}; login UserID, NOT employee_ID). Covers
+     Principal/Admin → All Staff / Department / Specific Member sends. Refreshes
+     every 60s and on window focus so new ones appear without re-login. */
+  const [inboxAnnouncements, setInboxAnnouncements] = useState([]);
+  useEffect(() => {
+    const loginUserId = Number(sessionStorage.getItem('UserID')) || 0;
+    if (!needAnnouncements || !loginUserId) { setInboxAnnouncements([]); return undefined; }
+    let alive = true;
+    const load = () => getUserNotifications(loginUserId)
+      .then((json) => {
+        if (!alive) return;
+        const rows = Array.isArray(json?.data) ? json.data : [];
+        const seen = new Set();
+        setInboxAnnouncements(rows
+          /* Branch-level = sent from the ERP Notifications module. Platform-level
+             (HQ) items already come through getBillingAnnouncements for heads. */
+          .filter((n) => n && String(n.level || '').toLowerCase() === 'branch' && (n.title || n.message))
+          .filter((n) => { const k = n.notificationID ?? n.recipientID; if (seen.has(k)) return false; seen.add(k); return true; })
+          .map((n) => {
+            const dt = n.createdAt ? new Date(n.createdAt) : null;
+            const ok = dt && !Number.isNaN(+dt);
+            const text = htmlToPlainText(n.message ?? '');
+            return {
+              id: `inbox-${n.recipientID ?? n.notificationID}`,
+              sender: n.senderName || n.createdByName || 'School Administration',
+              title: n.title || 'Untitled notice',
+              preview: text,
+              description: text,
+              category: n.notificationType || 'General',
+              date: ok ? dt.toLocaleDateString('en-PK', { day: 'numeric', month: 'short', year: 'numeric' }) : String(n.createdAt || '').slice(0, 10),
+              time: ok ? dt.toLocaleTimeString('en-PK', { hour: '2-digit', minute: '2-digit' }) : '',
+              status: n.isRead ? 'read' : 'new',
+              _ts: ok ? dt.getTime() : 0,
+              _recipientId: n.recipientID,
+              _notificationId: n.notificationID,
+            };
+          }));
+      })
+      .catch((err) => { console.error('Notification inbox error:', err); });
+    load();
+    const timer = setInterval(load, 60000);
+    window.addEventListener('focus', load);
+    return () => { alive = false; clearInterval(timer); window.removeEventListener('focus', load); };
+  }, [needAnnouncements]);
+
+  /* Persist read status for inbox items (same mark-read API as the mobile app). */
+  const handleAnnouncementRead = useCallback((ids) => {
+    const loginUserId = Number(sessionStorage.getItem('UserID')) || 0;
+    const targets = inboxAnnouncements.filter((a) => ids.includes(a.id) && a.status === 'new' && a._recipientId);
+    if (!loginUserId || !targets.length) return;
+    setInboxAnnouncements((prev) => prev.map((a) => (targets.some((t) => t.id === a.id) ? { ...a, status: 'read' } : a)));
+    targets.forEach((t) => {
+      markNotificationRead(loginUserId, t._recipientId)
+        .catch((err) => console.error('Mark notification read failed:', err));
+    });
+  }, [inboxAnnouncements]);
+
   /* Newest announcement surfaces in the top card; sender + count of
      remaining new ones are computed for the pill + footer line. */
 //   /* LIVE announcements (get-dashboard Announcements — PascalCase Title/Body/
@@ -1135,7 +1194,7 @@ const canSeeCard = useCallback(
     })
     .filter((a) => a.title || a.preview);
 
-  const liveAnnouncements = (isSchoolHead ? [...billingAnnouncements] : branchAnnouncements)
+  const liveAnnouncements = [...(isSchoolHead ? billingAnnouncements : branchAnnouncements), ...inboxAnnouncements]
     .sort((p, q) => (q._ts || 0) - (p._ts || 0));
   const latestAnnouncement = liveAnnouncements[0] || null;
 const newAnnouncementCount = liveAnnouncements.filter((a) => a.status === 'new').length;
@@ -1458,6 +1517,7 @@ name: [b.FirstName, b.LastName].filter(Boolean).join(' ') || b.StaffName || b.Na
       {showAnnouncements && (
         <AnnouncementsModal
           items={liveAnnouncements}
+          onMarkRead={handleAnnouncementRead}
           onClose={() => setShowAnnouncements(false)}
           toast={toast}
         />

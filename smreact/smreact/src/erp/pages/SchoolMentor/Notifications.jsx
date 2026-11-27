@@ -43,7 +43,7 @@ const NOTIFICATION_TYPES = [
 ];
 
 const SUB_LABELS = {
-  'all-staff': 'All Staff', teaching: 'Teaching Staff', admin: 'Admin Staff', support: 'Support Staff', 'specific-staff': 'Specific Member',
+  'all-staff': 'All Staff', teaching: 'Teaching Staff', admin: 'Admin Staff', support: 'Support Staff', department: 'Department', 'specific-staff': 'Specific Member',
   'all-parents': 'All Parents', 'class-wise': 'Class Wise', 'class-section': 'Class + Section', 'specific-parent': 'Specific Parent',
 };
 
@@ -79,6 +79,7 @@ export default function Notifications({ toast = () => {} }) {
   const [parentList, setParentList] = useState([]);
 const [selectedStaff, setSelectedStaff] = useState('');
   const [selectedParent, setSelectedParent] = useState('');
+  const [parentSearch, setParentSearch] = useState('');
   const [departments, setDepartments] = useState([]);
   const [selectedDepartment, setSelectedDepartment] = useState('');
   const [cls, setCls] = useState('');
@@ -162,14 +163,33 @@ const loadDepartments = async () => {
 const loadParents = async () => {
   const branchID = getBranchId();
   try {
+    /* get-students-by-branch does not exist (404) — use the same branch roster
+       Launch Setup / Students use (class → sections → students). The backend's
+       SpecificParent audienceRefId is the student id (one parent account per student). */
     const res = await fetch(
-      buildUrl(`/api/LaunchSetup/get-students-by-branch/${branchID}`),
+      buildUrl(`/api/LaunchSetup/get-class-section-studentlist-by-branch/${branchID}`),
       { headers: { Accept: '*/*' } }
     );
     if (!res.ok) throw new Error(`Could not load parents (${res.status})`);
     const json = await res.json();
-    if (json?.success === false) throw new Error(json.message || 'Could not load departments');
-    const students = Array.isArray(json?.data) ? json.data : Array.isArray(json) ? json : [];
+    if (json?.success === false) throw new Error(json.message || 'Could not load parents');
+    const seen = new Set();
+    const students = [];
+    (Array.isArray(json?.data) ? json.data : []).forEach(g => {
+      (Array.isArray(g?.sections) ? g.sections : []).forEach(sec => {
+        (Array.isArray(sec?.students) ? sec.students : []).forEach(st => {
+          if (!st || st.isActive === false || st.id == null || seen.has(st.id)) return;
+          seen.add(st.id);
+          students.push({
+            ...st,
+            gradeId: st.gradeId ?? g.id,
+            sectionId: st.sectionId ?? sec.sectionID,
+            className: g.name ?? '',
+            sectionName: sec.sectionName ?? '',
+          });
+        });
+      });
+    });
     setParentList(students);
   } catch (error) {
     console.error('Could not load parent/student data:', error);
@@ -347,7 +367,7 @@ useEffect(() => {
   };
 
   updateEstimate();
-}, [audience, subAud, selectedStaff, selectedDepartment, cls, section]);
+}, [audience, subAud, selectedStaff, selectedDepartment, selectedParent, cls, section]);
 
 const getRecipientEstimate = async () => {
   try {
@@ -457,9 +477,26 @@ const sendNotificationAPI = async () => {
       if (selectedName) lbl += ` · ${selectedName}`;
     }
 
+    if (audience === 'staff' && subAud === 'department' && selectedDepartment) {
+      const dep = departments.find(
+        d => String(d.id ?? d.ID ?? d.departmentID) === String(selectedDepartment)
+      );
+      const depName = dep ? (dep.name ?? dep.departmentName ?? dep.DepartmentName) : '';
+      if (depName) lbl += ` · ${depName}`;
+    }
+
+    if (audience === 'parents' && subAud === 'specific-parent' && selectedParent) {
+      const sel = parentList.find(s => String(s.id) === String(selectedParent));
+      if (sel) lbl += ` · ${parentOptionLabel(sel)}`;
+    }
+
     if (showClass && cls) {
-      lbl += ` · ${cls}`;
-      if (showSection && section) lbl += ` ${section}`;
+      const g = grades.find(x => String(x.id ?? x.ID ?? x.gradeID) === String(cls));
+      lbl += ` · ${g ? (g.name ?? g.gradeName ?? g.Name ?? cls) : cls}`;
+      if (showSection && section) {
+        const sec = sections.find(x => String(x.id) === String(section));
+        lbl += ` ${sec ? sec.name : section}`;
+      }
     }
     return lbl;
   };
@@ -522,9 +559,20 @@ const sendNotificationAPI = async () => {
       setBody('');
 
       const resultData = result?.data || {};
+      const recipientCount = Number(resultData.recipientCount ?? estimate);
+      const deliveredCount = Number(resultData.deliveredCount ?? 0);
+      const failedCount = Number(resultData.failedCount ?? 0);
+      const notPushed = Math.max(recipientCount - deliveredCount - failedCount, 0);
+      const allDelivered = deliveredCount > 0 && deliveredCount >= recipientCount;
+      // Counts come straight from the backend send result; success only when every recipient was delivered.
+      if (!allDelivered) {
+        console.warn('Notification delivery incomplete:', { notificationID: resultData.notificationID, message: result?.message, ...resultData });
+      }
       toast(
-        `Notification sent successfully. Delivered ${resultData.deliveredCount ?? 0} of ${resultData.recipientCount ?? estimate} recipients.`,
-        'success'
+        allDelivered
+          ? `Notification sent successfully. Delivered ${deliveredCount} of ${recipientCount} recipients.`
+          : `Notification saved for ${recipientCount} recipient(s). Push delivered: ${deliveredCount}, failed: ${failedCount}, not pushed: ${notPushed}.`,
+        allDelivered ? 'success' : (deliveredCount > 0 ? 'warning' : 'error')
       );
 
       await loadNotificationHistory();
@@ -586,6 +634,57 @@ const sendNotificationAPI = async () => {
   const filteredStaff = selectedDepartment
     ? staffList.filter(staff => String(staff.departmentID ?? staff.DepartmentID ?? staff.departmentId) === String(selectedDepartment))
     : staffList;
+
+  const studentName = (s) => `${s.firstName ?? s.FirstName ?? ''} ${s.lastName ?? s.LastName ?? ''}`.trim() || s.studentName || s.name || `Student #${s.id}`;
+  const parentOptionLabel = (s) => {
+    const parts = [studentName(s)];
+    if (s.fatherName) parts.push(`Parent: ${s.fatherName}`);
+    if (s.className) parts.push(`${s.className}${s.sectionName ? ` ${s.sectionName}` : ''}`);
+    if (s.mobileNo) parts.push(s.mobileNo);
+    return parts.join(' · ');
+  };
+  const filteredParents = useMemo(() => {
+    const q = parentSearch.trim().toLowerCase();
+    const qDigits = q.replace(/\D/g, '');
+    const list = !q ? parentList : parentList.filter(s =>
+      studentName(s).toLowerCase().includes(q) ||
+      String(s.fatherName || '').toLowerCase().includes(q) ||
+      String(s.motherName || '').toLowerCase().includes(q) ||
+      (qDigits.length >= 3 && [s.mobileNo, s.motherMobileNo].some(m => String(m || '').replace(/\D/g, '').includes(qDigits)))
+    );
+    /* Keep the current selection visible while searching. */
+    if (selectedParent && !list.some(s => String(s.id) === String(selectedParent))) {
+      const cur = parentList.find(s => String(s.id) === String(selectedParent));
+      if (cur) return [cur, ...list];
+    }
+    return list;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [parentList, parentSearch, selectedParent]);
+
+  /* Students matching the current parent selection (one parent app account per
+     student in this system) — shown beside the backend's deliverable estimate. */
+  const matchingList = audience !== 'parents' ? null
+    : subAud === 'all-parents' ? parentList
+    : subAud === 'class-wise' ? (cls ? parentList.filter(s => String(s.gradeId) === String(cls)) : null)
+    : subAud === 'class-section' ? (cls && section ? parentList.filter(s => String(s.gradeId) === String(cls) && String(s.sectionId) === String(section)) : null)
+    : subAud === 'specific-parent' ? (selectedParent ? parentList.filter(s => String(s.id) === String(selectedParent)) : null)
+    : null;
+  const matchingStudents = matchingList ? matchingList.length : null;
+  /* A parent with several children is one parent: same registered phone (last
+     10 digits, so 0321-… / +92321… / 0321… match) counts once. No phone → the
+     student's own parent record counts on its own. */
+  const matchingParents = matchingList
+    ? new Set(matchingList.map(s => {
+        const d = String(s.mobileNo || '').replace(/\D/g, '');
+        return d.length >= 10 ? `p${d.slice(-10)}` : `s${s.id}`;
+      })).size
+    : null;
+  /* Main card value: parents in the selected audience. Push-deliverable count
+     (backend estimate = parent app accounts with a device token) shown beside it. */
+  const estimateMain = matchingParents != null ? matchingParents : recipientEstimate;
+  const estimateDetail = matchingParents != null
+    ? `${matchingParents} parent${matchingParents === 1 ? '' : 's'} selected · ${matchingStudents} student${matchingStudents === 1 ? '' : 's'} · ${recipientEstimate} push-deliverable (app installed)${recipientEstimate === 0 ? ' — not reachable by push' : ''}`
+    : 'Based on current audience selection';
 
   const subs = audience === 'staff' ? STAFF_SUBS : PARENT_SUBS;
 
@@ -737,12 +836,18 @@ const sendNotificationAPI = async () => {
                   {subAud === 'specific-parent' && (
                     <>
                       <label className="form-label">Select Parent / Student <span className="req-star">*</span></label>
-                      <select className="form-input" value={selectedParent} onChange={e => setSelectedParent(e.target.value)} style={{ marginTop: 6 }}>
-                        <option value="">Select Parent / Student</option>
-                        {parentList.map(student => {
+                      <input
+                        className="form-input"
+                        placeholder="Search by student, parent name or phone..."
+                        value={parentSearch}
+                        onChange={e => setParentSearch(e.target.value)}
+                        style={{ marginTop: 6, marginBottom: 6 }}
+                      />
+                      <select className="form-input" value={selectedParent} onChange={e => setSelectedParent(e.target.value)}>
+                        <option value="">Select Parent / Student ({filteredParents.length})</option>
+                        {filteredParents.map(student => {
                           const id = student.id ?? student.ID ?? student.studentID ?? student.StudentID;
-                          const name = student.studentName || student.name || `${student.firstName ?? student.FirstName ?? ''} ${student.lastName ?? student.LastName ?? ''}`.trim() || `Student #${id}`;
-                          return <option key={id} value={id}>{name}</option>;
+                          return <option key={id} value={id}>{parentOptionLabel(student)}</option>;
                         })}
                       </select>
                     </>
@@ -837,8 +942,8 @@ const sendNotificationAPI = async () => {
               <Guideline icon="fa-shield-halved" ic="#16A34A" bg="var(--bg-muted)" border="var(--border-light)">Notifications cannot be recalled after sending. Review carefully before clicking <strong>Send Now</strong>.</Guideline>
               <div style={{ background: 'var(--brand-light)', border: '1px solid var(--border-light)', borderRadius: 'var(--radius-md)', padding: '13px 14px' }}>
                 <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--brand-primary)', textTransform: 'uppercase', letterSpacing: '.5px', marginBottom: 8 }}><i className="fa-solid fa-users" style={{ marginRight: 5 }} />Estimated Recipients</div>
-                <div style={{ fontSize: 22, fontWeight: 800, color: 'var(--brand-primary)' }}>~{recipientEstimate}</div>
-                <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>Based on current audience selection</div>
+                <div style={{ fontSize: 22, fontWeight: 800, color: 'var(--brand-primary)' }}>~{estimateMain}</div>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>{estimateDetail}</div>
               </div>
             </div>
           </div>
@@ -914,7 +1019,9 @@ const sendNotificationAPI = async () => {
       {confirmOpen && (
         <ConfirmModal
           audienceLabel={buildAudienceLabel()}
-          recipients={recipientEstimate}
+          recipients={matchingParents != null
+            ? `${matchingParents} parent${matchingParents === 1 ? '' : 's'} (${recipientEstimate} push-deliverable)`
+            : `~${recipientEstimate} users`}
           title={title.trim()}
           onClose={() => setConfirmOpen(false)}
           onSend={doSend}
@@ -972,7 +1079,7 @@ function ConfirmModal({ audienceLabel, recipients, title, onClose, onSend }) {
         <div style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6, marginBottom: 12 }}>This notification will be sent to the selected users on their <strong>mobile applications</strong>. Please review the details below before confirming.</div>
         <div className="nt-confirm-summary">
           <div className="ncs-row"><span className="ncs-label">Audience</span><span className="ncs-val">{audienceLabel}</span></div>
-          <div className="ncs-row"><span className="ncs-label">Recipients</span><span className="ncs-val">~{recipients} users</span></div>
+          <div className="ncs-row"><span className="ncs-label">Recipients</span><span className="ncs-val">{recipients}</span></div>
           <div className="ncs-row"><span className="ncs-label">Title</span><span className="ncs-val">{title}</span></div>
         </div>
         <div className="nt-helper warn"><i className="fa-solid fa-circle-info" /> Notifications cannot be recalled after sending.</div>

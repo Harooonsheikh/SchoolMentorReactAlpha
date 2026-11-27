@@ -10,7 +10,7 @@ import { DASH_MODAL_CSS } from './dashModalCss';
    read" toggle that mutates the in-memory list (would be persisted
    to backend in production).
    ═══════════════════════════════════════════════════════════════════ */
-export default function AnnouncementsModal({ items: initialItems = [], onClose, toast = () => {} }) {
+export default function AnnouncementsModal({ items: initialItems = [], onClose, onMarkRead = () => {}, toast = () => {} }) {
   const [items, setItems] = useState(initialItems);
 
   useEffect(() => {
@@ -27,9 +27,11 @@ export default function AnnouncementsModal({ items: initialItems = [], onClose, 
 
   const markRead = (id) => {
     setItems(prev => prev.map(i => i.id === id ? { ...i, status: 'read' } : i));
+    onMarkRead([id]);
   };
   const markAllRead = () => {
     if (unreadCount === 0) return;
+    onMarkRead(items.filter(i => i.status === 'new').map(i => i.id));
     setItems(prev => prev.map(i => ({ ...i, status: 'read' })));
     toast('All announcements marked as read', 'success');
   };
