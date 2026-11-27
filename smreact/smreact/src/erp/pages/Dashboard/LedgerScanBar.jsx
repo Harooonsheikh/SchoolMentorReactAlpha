@@ -33,17 +33,10 @@ const CSS = `
 @media (max-width:560px){.lsb-label{width:100%;} .lsb-btn{width:100%;}}
 `;
 
-/* Challan Lookup box ki allowed branches. */
-const LOOKUP_BRANCH_IDS = new Set([1, 15]);
-
 export default function LedgerScanBar({ onOpenChallan = () => {}, toast = () => {} }) {
   const [val, setVal] = useState('');
   const [infoOpen, setInfoOpen] = useState(false);
   const inputRef = useRef(null);
-
-  /* Sirf in branches par dikhta hai. Branch sessionStorage se (login par set hota hai). */
-  const branchId = Number(sessionStorage.getItem('branchID')) || 0;
-  if (!LOOKUP_BRANCH_IDS.has(branchId)) return null;
 
   const submit = () => {
     const parsed = parseChallanBarcode(val);

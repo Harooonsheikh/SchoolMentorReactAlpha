@@ -1638,11 +1638,11 @@ export default function Examination({ toast = () => { } }) {
      Preschool har branch par live hai (toggle + per-class Preschool option +
      Result Setup tab). */
   const isPreschoolBranch = true;
-  const [pResultType, setPResultType] = useState('grade');
+  const [pResultType, setPResultType] = useState('preschool');
   /* Permission ke hisaab se asal tab: Pre-Schooling View nahi → hamesha Grade;
      sirf Pre-Schooling ho (Grade setup ka View nahi) → hamesha Preschool. */
   const effResultType = !showPreschool ? 'grade' : (!showGradeSetup ? 'preschool' : pResultType);
-  const [pRsL2, setPRsL2] = useState('setup');
+  const [pRsL2, setPRsL2] = useState('classes');
   const { data: pLearningAreas = [], setData: setPLearningAreas } = useAsync(preschoolService.getLearningAreas, []);
   const { data: pGradingScale = [], setData: setPGradingScale } = useAsync(preschoolService.getGradingScale, []);
   const { data: pSlo = {}, setData: setPSlo } = useAsync(preschoolService.getSloStatements, []);
@@ -6262,14 +6262,14 @@ setCbrCardMarks({ subjects: subs.map(s => s.subjectName).filter(n => n && String
               {isPreschoolBranch && showPreschool && (
                 <div className="ds-switcher">
                   <div className="ds-switcher-group">
+                    <button className={`ds-switcher-tab${effResultType === 'preschool' ? ' active' : ''}`} onClick={() => setPResultType('preschool')}>
+                      <i className="fa-solid fa-shapes"></i> Preschool / Montessori
+                    </button>
                     {showGradeSetup && (
                       <button className={`ds-switcher-tab${effResultType === 'grade' ? ' active' : ''}`} onClick={() => setPResultType('grade')}>
                         <i className="fa-solid fa-graduation-cap"></i> Grade 1-12
                       </button>
                     )}
-                    <button className={`ds-switcher-tab${effResultType === 'preschool' ? ' active' : ''}`} onClick={() => setPResultType('preschool')}>
-                      <i className="fa-solid fa-shapes"></i> Preschool / Montessori
-                    </button>
                   </div>
                 </div>
               )}

@@ -93,10 +93,8 @@ export default function Academics({ l1, setL1, l2, setL2, l3, setL3, toast }) {
      wala effect l1 ko 'rl' par le ja sakta tha aur panel bina button ke
      khul jata. */
   // const showRl        = acadView('Resource Library');
-  /* Resource Library sirf branch 1 aur 15 ke liye — baqi sab ke liye hidden. */
-  const RL_ALLOWED_BRANCHES = ['1', '15'];
-  const currentBranchId = sessionStorage.getItem('branchID');
-  const showRl = acadView('Resource Library') && RL_ALLOWED_BRANCHES.includes(String(currentBranchId));
+  /* Resource Library sab branches par — sirf Academics → Resource Library View permission se. */
+  const showRl = acadView('Resource Library');
   /* Reports L1 tab (AcademicsReports.js) — "Academics > Reports" View permission.
      ACADEMICS_REPORTS_TAB_VISIBLE = true → dikhta hai (View permission ke saath). */
   const showReports   = ACADEMICS_REPORTS_TAB_VISIBLE && acadView('Reports');
