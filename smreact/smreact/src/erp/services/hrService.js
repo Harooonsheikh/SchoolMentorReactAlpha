@@ -243,14 +243,90 @@ export async function deleteHrDesig({ id }) {
   return json;
 }
 
-/* ─── Security Retention setup (session-local) ───
-   The live API has no retention fields yet, so each employee's retention
-   setup is kept here keyed by employee ID (eid) and merged into every
-   employee-list read. It lasts for the browser session until the backend
-   stores it. */
+/* ─── Security Retention (HR) ───
+   GET  /api/HR/get-security-retention/{employeeID}/{branchID}
+   POST /api/HR/save-security-retention
+   The UI keeps months as 'YYYY-MM'; the API takes a full date, so each
+   month is sent as its 1st day. retentionSetupByEid caches the last
+   loaded/saved setup per employee (eid) for the current page session. */
 const retentionSetupByEid = new Map();
 export function setLocalRetentionSetup(eid, setup) {
   if (eid) retentionSetupByEid.set(String(eid), setup || null);
+}
+const retMonthKey = (v) => (v ? String(v).slice(0, 7) : '');
+const retMonthIso = (k) => (k ? `${k}-01T00:00:00.000Z` : null);
+
+/* Maps the API retention record to the UI shape used by the employee form,
+   payroll and the reports. Accepts a bare record or { data: record | [record] }. */
+function mapApiRetention(json) {
+  const d = json?.data ?? json;
+  const rec = Array.isArray(d) ? d[0] : d;
+  if (!rec || typeof rec !== 'object') return null;
+  const isMonthly = !!(rec.isMonthly ?? rec.IsMonthly);
+  const start = retMonthKey(rec.startMonth ?? rec.StartMonth);
+  const end   = retMonthKey(rec.endMonth ?? rec.EndMonth);
+  const enabled = !!(rec.isRetention ?? rec.IsRetention);
+  return {
+    id:           rec.id ?? rec.ID ?? 0,
+    enabled,
+    type:         isMonthly ? 'monthly' : 'onetime',
+    amount:       Number(rec.amount ?? rec.Amount) || 0,
+    oneTimeMonth: isMonthly ? '' : start,
+    startMonth:   isMonthly ? start : '',
+    endMonth:     isMonthly ? end : '',
+    notes:        rec.retentionNote ?? rec.RetentionNote ?? '',
+    status:       enabled ? 'active' : 'disabled',
+  };
+}
+
+/* GET one employee's security retention for the logged-in branch. */
+export async function getHrSecurityRetention(employeeID) {
+  const branchID = Number(sessionStorage.getItem('branchID')) || 0;
+  const res = await fetch(
+    buildUrl(`/api/HR/get-security-retention/${Number(employeeID) || 0}/${branchID}`),
+    { method: 'GET', headers: { Accept: '*/*' } }
+  );
+  const json = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(apiMessage(json) || 'Could not load security retention');
+  return mapApiRetention(json);
+}
+
+/* POST the employee's security retention. One-time uses the chosen month for
+   both startMonth and endMonth with isMonthly=false; monthly sends the start
+   month and the end month (null = ongoing). isRetention mirrors the toggle. */
+export async function saveHrSecurityRetention({ employeeID, retention = {} } = {}) {
+  const branchID  = Number(sessionStorage.getItem('branchID')) || 0;
+  const userID    = Number(sessionStorage.getItem('UserID')) || 0;
+  const enabled   = !!retention.enabled;
+  const isMonthly = retention.type === 'monthly';
+  const startKey  = isMonthly ? retention.startMonth : retention.oneTimeMonth;
+  const endKey    = isMonthly ? (retention.endMonth || '') : retention.oneTimeMonth;
+  const amount    = enabled ? (Number(retention.amount) || 0) : 0;
+  const res = await fetch(buildUrl('/api/HR/save-security-retention'), {
+    method: 'POST',
+    headers: { Accept: '*/*', 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      id:            Number(retention.id) || 0,
+      employeeID:    Number(employeeID) || 0,
+      branchID,
+      isRetention:   enabled,
+      amount,
+      isMonthly,
+      startMonth:    retMonthIso(startKey),
+      endMonth:      retMonthIso(endKey),
+      retentionNote: retention.notes || '',
+      createdBy:     userID,
+      modifiedBy:    userID,
+    }),
+  });
+  const json = await res.json().catch(() => null);
+  if (!res.ok || json?.success === false) throw new Error(apiMessage(json) || 'Could not save security retention');
+  const eid = `EMP-${String(Number(employeeID) || 0).padStart(3, '0')}`;
+  setLocalRetentionSetup(eid, {
+    ...retention, enabled, amount, status: enabled ? 'active' : 'disabled',
+    id: retention.id || json?.data?.id || json?.data?.ID || 0,
+  });
+  return json;
 }
 
 /* ─── Employee Management — real API (LaunchSetup) ─── */
@@ -284,8 +360,15 @@ export async function getHrEmployees() {
     fetchByStatus(false),
   ]);
 
-  return [...activeList, ...inactiveList].map(mapApiEmployeeToEmp).map((e) => {
-    const setup = retentionSetupByEid.get(String(e.eid));
+  const list = [...activeList, ...inactiveList].map(mapApiEmployeeToEmp);
+  /* Retention comes from the GET endpoint per employee. A failed lookup falls
+     back to the setup saved earlier in this session. */
+  const setups = await Promise.all(
+    list.map((e) => getHrSecurityRetention(e.id).catch(() => null))
+  );
+  return list.map((e, i) => {
+    const setup = setups[i] || retentionSetupByEid.get(String(e.eid));
+    if (setup) retentionSetupByEid.set(String(e.eid), setup);
     return setup ? { ...e, securityRetention: setup } : e;
   });
 }
@@ -516,6 +599,8 @@ function mapApiPayrollRecord(p, empHeads = []) {
     absentCount:        Number(p.AbsentCount) || 0,
     absentDeduct:       Number(p.AbsentDeduction) || 0,
     absentComment:      p.AbsentComment || '',
+    securityRetentionDeduct:  Number(p.Security_Retention_Amount) || 0,
+    securityRetentionComment: p.Security_Retention_Note || '',
     totalDeductions:    Number(p.TotalDeductions) || 0,
     netPayable:         Number(p.NetPayable) || 0,
     paidAmount:         paid,
@@ -591,6 +676,8 @@ export async function saveHrPayrollSetup(p = {}) {
       absentCount:      Number(p.absentCount) || 0,
       absentDeduction:  Number(p.absentDeduction) || 0,
       absentComment:    p.absentComment || '',
+      securityRetentionAmount: Number(p.securityRetentionAmount) || 0,
+      securityRetentionNote:   p.securityRetentionNote || '',
       createdBy:        userID,
       modifiedBy:       userID,
     }),

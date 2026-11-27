@@ -8,8 +8,9 @@ import { SettingsProvider, TopbarSessionPill } from '../pages/Settings/settingsS
 import { useModules } from '../context/ModuleContext';
 import { usePermissions } from '../context/PermissionsContext';
 import { NAV_TO_MODULE_MAP, MODULE_REGISTRY, APPROVAL_TYPE_MSGS } from '../config/moduleConfig';
+import { MOBILE_APP_FILE_NAME, MOBILE_APP_DOWNLOAD_URL, MOBILE_APP_BUTTON_LABEL } from '../config/mobileAppDownload';
 import { logout, goToLaunchSetup } from '../utils/auth';
-import { buildUrl, installSessionGuard, setSessionGuardActive, registerSessionToast, resolveMediaUrl, BILLING_READ_ONLY_MSG } from '../../utils/apiConfig';
+import { buildUrl, installSessionGuard, setSessionGuardActive, registerSessionToast, resolveMediaUrl, BILLING_READ_ONLY_MSG, isSandboxEnv } from '../../utils/apiConfig';
 import { loadReportBranch } from '../reports/reportKit';
 import * as profileService from '../services/profileService';
 import useUserTimeSpend from '../hooks/useUserTimeSpend';
@@ -566,6 +567,27 @@ if (navId === 'mentorai') {
     setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 3000);
   };
 
+  /* Sidebar ka "Download Sandbox Mobile APP" — click par APK khud download hoti hai.
+     Pehle HEAD se check: file na ho ya SPA fallback (text/html) aaye to download
+     nahi karte, warna user ko HTML file ".apk" naam se mil jati. */
+  const downloadMobileApp = async () => {
+    try {
+      const res = await fetch(MOBILE_APP_DOWNLOAD_URL, { method: 'HEAD', cache: 'no-store' });
+      const type = (res.headers.get('content-type') || '').toLowerCase();
+      const missing = !res.ok && res.status !== 405 && res.status !== 501;
+      if (missing || type.includes('text/html')) throw new Error('mobile app not available');
+    } catch (e) {
+      pushToast('Mobile app abhi available nahi hai. Thori dair baad try karein.', 'warning');
+      return;
+    }
+    const a = document.createElement('a');
+    a.href = MOBILE_APP_DOWNLOAD_URL;
+    a.download = MOBILE_APP_FILE_NAME;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  };
+
   /* View-only (chain) account ka toast. Callback ka pata BADALNA nahi chahiye
      — ViewOnlyGuard ka effect isi par chalta hai, aur har render par naya
      function dene se wo DOM observer baar baar utaarta-lagata rehta. Is liye
@@ -682,6 +704,21 @@ if (navId === 'mentorai') {
           </div>
 
           <nav className="sidebar-nav">
+            {/* Sandbox Mobile App download — Dashboard se upar. Sirf sandbox (dev) env par. */}
+            {isSandboxEnv() && (
+              <>
+                <button
+                  type="button"
+                  className="nav-item nav-item--download"
+                  data-tooltip={MOBILE_APP_BUTTON_LABEL}
+                  onClick={downloadMobileApp}
+                >
+                  <div className="nav-iw"><i className="fa-solid fa-download"></i></div>
+                  <div className="nav-nm">{MOBILE_APP_BUTTON_LABEL}</div>
+                </button>
+                <div className="nav-divider"></div>
+              </>
+            )}
             {/* Modules/permissions load hone tak halka placeholder — khaali
                 sidebar se behtar, aur off-module ka flash bhi nahi hota. */}
             {(!modulesReady || !permsReady) && (
@@ -1473,6 +1510,13 @@ body.dark .play-dot::after  { border-color:rgba(59,130,246,.15); }
 .nav-item:hover .nav-nm { color:#1E40AF; }
 .nav-item--locked { opacity:.55; cursor:not-allowed; }
 .nav-item--locked .nav-st { color:#B91C1C; }
+/* Sandbox Mobile App download button — green tint so it reads as an action, not a module */
+.nav-item--download .nav-iw { background:#ECFDF5;color:#047857; }
+.nav-item--download:hover .nav-iw { background:#D1FAE5;color:#065F46; }
+.nav-item--download:hover .nav-nm { color:#065F46; }
+.nav-item--download .nav-nm { font-weight:600; }
+[data-theme="dark"] .nav-item--download .nav-iw { background:rgba(16,185,129,.16);color:#6EE7B7; }
+[data-theme="dark"] .nav-item--download:hover .nav-nm { color:#6EE7B7; }
 .nav-item.active { background:linear-gradient(135deg,#EEF4FF,#DBEAFE); }
 .nav-item.active::before { content:'';position:absolute;left:0;top:18%;bottom:18%;width:3px;background:linear-gradient(180deg,#1E40AF,#1E3A8A);border-radius:0 3px 3px 0; }
 .nav-item.active .nav-iw { background:linear-gradient(135deg,#DBEAFE,#BFDBFE);color:#1E40AF; }

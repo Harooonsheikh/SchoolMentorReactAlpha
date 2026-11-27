@@ -1287,8 +1287,8 @@ function getFullNameLike(e) {
   return `${e.firstName || ''} ${e.lastName || ''}`.trim() || e.eid || '—';
 }
 
-export function generateHrSecurityRetentionReport({ rows, kpis, filtersHtml = '', style = 'color', format = 'pdf' }) {
-  const ctx = { style, format };
+export function generateHrSecurityRetentionReport({ rows, kpis, filtersHtml = '', style = 'color', format = 'pdf', branch = null }) {
+  const ctx = { style, format, branch };
   const bodyRows = rows.map((r, i) => `<tr>
     <td>${i + 1}</td><td><b>${r.empName}</b></td><td>${r.eid}</td>
     <td>${r.deptName || '—'}</td><td>${r.desigName || '—'}</td>
@@ -1328,8 +1328,8 @@ export function generateHrSecurityRetentionReport({ rows, kpis, filtersHtml = ''
 }
 
 /* ════════ 8. Security Retention — single employee statement ════════ */
-export function generateHrSecurityRetentionEmployeeReport({ emp, deptName, desigName, txns, totalRetained, firstDate, latestDate, style = 'color', format = 'pdf' }) {
-  const ctx = { style, format };
+export function generateHrSecurityRetentionEmployeeReport({ emp, deptName, desigName, txns, totalRetained, firstDate, latestDate, style = 'color', format = 'pdf', branch = null }) {
+  const ctx = { style, format, branch };
   const r = emp.securityRetention || {};
   const rows = txns.map(t => `<tr>
     <td>${hrFmtMonthKey(t.monthKey)}</td>

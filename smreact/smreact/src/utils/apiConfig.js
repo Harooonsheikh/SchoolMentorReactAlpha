@@ -60,6 +60,12 @@ export function getBaseUrl() {
   return (saved && !insecure && !unknownHost) ? saved : DEFAULT_URL;
 }
 
+/** True when the app is talking to the sandbox (dev) environment — the same
+ *  host check the login screen uses for its "Dev Env" badge. */
+export function isSandboxEnv() {
+  return getBaseUrl().toLowerCase().includes('sandbox');
+}
+
 /** Persist a new base URL */
 export function saveBaseUrl(url) {
   const trimmed = url.trim().replace(/\/+$/, ''); // strip trailing slashes

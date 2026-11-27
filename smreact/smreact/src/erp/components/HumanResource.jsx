@@ -149,27 +149,26 @@ export default function HumanResource({ toast = () => { } }) {
   const [nextDesigId, setNextDesigId] = useState(null);
   const [nextEmpId, setNextEmpId] = useState(null);
 
-  /* Security Retention payroll transactions — one record per employee +
-     payroll month, upserted (never pushed) so re-saving the same month can
-     never create a duplicate. Session-local until the backend stores it. */
-  const [retentionTxns, setRetentionTxns] = useState([]);
-  const upsertRetentionTxn = (emp, mKey, patch) => {
-    const today = new Date().toISOString().slice(0, 10);
-    setRetentionTxns(prev => {
-      const idx = prev.findIndex(t => t.empId === emp.id && t.monthKey === mKey);
-      if (idx === -1) {
-        return [...prev, {
-          id: `${emp.id}-${mKey}`, empId: emp.id, monthKey: mKey,
-          type: patch.type, configuredAmount: patch.configuredAmount, actualDeducted: patch.actualDeducted,
-          payrollRef: `PR-${emp.id}-${mKey}`, date: today, notes: patch.notes || '',
-          status: emp.securityRetention?.status || 'active',
-        }];
-      }
-      const next = [...prev];
-      next[idx] = { ...next[idx], ...patch, date: today };
-      return next;
-    });
-  };
+  /* Security Retention report rows come from the saved payroll records
+     (securityRetentionDeduct per employee + payroll month). The payroll save
+     calls upsertRetentionTxn, which bumps retentionReload to refetch them. */
+  const [retentionReload, setRetentionReload] = useState(0);
+  const [payrollByEmp, setPayrollByEmp] = useState({});
+  const upsertRetentionTxn = () => setRetentionReload(n => n + 1);
+  useEffect(() => {
+    let alive = true;
+    const y = new Date().getFullYear();
+    Promise.all(Array.from({ length: 12 }, (_, i) => hrService.getHrPayrollByBranch(i + 1, y).catch(() => ({}))))
+      .then((parts) => {
+        if (!alive) return;
+        const merged = {};
+        parts.forEach((p) => Object.entries(p || {}).forEach(([eid, byMonth]) => {
+          merged[eid] = { ...(merged[eid] || {}), ...byMonth };
+        }));
+        setPayrollByEmp(merged);
+      });
+    return () => { alive = false; };
+  }, [retentionReload]);
 
   useEffect(() => { if (serverDepts.length && depts == null) setDepts(serverDepts); }, [serverDepts, depts]);
   useEffect(() => { if (serverDesigs.length && desigs == null) setDesigs(serverDesigs); }, [serverDesigs, desigs]);
@@ -181,6 +180,34 @@ export default function HumanResource({ toast = () => { } }) {
   const deptList = depts || [];
   const desigList = desigs || [];
   const empList = emps || [];
+
+  /* One report row per employee + payroll month that has a saved payroll record.
+     Configured = the employee's retention setup for that month; Deducted = the
+     amount stored on the payroll record. */
+  const retentionTxns = useMemo(() => {
+    const out = [];
+    empList.forEach((emp) => {
+      const byMonth = payrollByEmp[emp.id] || {};
+      Object.entries(byMonth).forEach(([mKey, rec]) => {
+        const actual = Number(rec.securityRetentionDeduct) || 0;
+        const configured = getSecurityRetentionAmount(emp, mKey);
+        if (!actual && !configured) return;
+        out.push({
+          id: `${emp.id}-${mKey}`,
+          empId: emp.id,
+          monthKey: mKey,
+          type: emp.securityRetention?.type || 'monthly',
+          configuredAmount: configured,
+          actualDeducted: actual,
+          payrollRef: rec.payrollID ? `PR-${rec.payrollID}` : `PR-${emp.id}-${mKey}`,
+          date: `${mKey}-01`,
+          notes: rec.securityRetentionComment || '',
+          status: emp.securityRetention?.status || 'active',
+        });
+      });
+    });
+    return out;
+  }, [empList, payrollByEmp]);
 
   /* Re-pull departments + designations from the server after a mutation
      so the table reflects the saved state. */
@@ -1479,6 +1506,12 @@ function SecurityRetentionReport({ emps, depts, desigs, retentionTxns, getDeptNa
   const [statusFilter, setStatusFilter] = useState('all');
   const [detailEmpId, setDetailEmpId] = useState(null);
   const [exportModalOpen, setExportModalOpen] = useState(false);
+  const [branch, setBranch] = useState(null);   // live /report-header data for the report header/footer
+  useEffect(() => {
+    let alive = true;
+    fetchReportHeader().then((b) => { if (alive && b) setBranch(b); });
+    return () => { alive = false; };
+  }, []);
 
   const empMap = useMemo(() => new Map(emps.map(e => [e.id, e])), [emps]);
   const uniqueMonths = useMemo(
@@ -1554,7 +1587,7 @@ function SecurityRetentionReport({ emps, depts, desigs, retentionTxns, getDeptNa
         desigName: getDesigName(e?.desId),
       };
     });
-    const html = generateHrSecurityRetentionReport({ rows, kpis, filtersHtml: filterSpans, style, format });
+    const html = generateHrSecurityRetentionReport({ rows, kpis, filtersHtml: filterSpans, style, format, branch });
 
     if (format === 'word') {
       downloadReportAsWord(html, `${reportFileName('Security-Retention-Report')}.doc`);
@@ -1759,6 +1792,13 @@ function RetentionEmployeeDetailModal({ emp, deptName, desigName, txns, canDownl
     };
   }, [onClose]);
 
+  const [branch, setBranch] = useState(null);   // live /report-header data for the statement header/footer
+  useEffect(() => {
+    let alive = true;
+    fetchReportHeader().then((b) => { if (alive && b) setBranch(b); });
+    return () => { alive = false; };
+  }, []);
+
   const r = emp.securityRetention || {};
   const totalRetained = txns.reduce((s, t) => s + (Number(t.actualDeducted) || 0), 0);
   const firstDate  = txns.length ? txns[0].date : null;
@@ -1766,7 +1806,7 @@ function RetentionEmployeeDetailModal({ emp, deptName, desigName, txns, canDownl
 
   const downloadEmployeeReport = (style, format) => {
     const html = generateHrSecurityRetentionEmployeeReport({
-      emp, deptName, desigName, txns, totalRetained, firstDate, latestDate, style, format,
+      emp, deptName, desigName, txns, totalRetained, firstDate, latestDate, style, format, branch,
     });
     const filename = reportFileName(`Security-Retention-${emp.eid || emp.id}`);
     if (format === 'word') {
@@ -2866,14 +2906,8 @@ function Financials({ loading = false, emps, depts = [], desigs, toast, upsertRe
           onClose={() => setPrFor(null)}
           onSaveSetup={(rec) => {
             upsertRec(prFor.id, month, year, rec);
-            if (upsertRetentionTxn && prFor.securityRetention?.enabled) {
-              upsertRetentionTxn(prFor, monthKey(month, year), {
-                type: prFor.securityRetention.type,
-                configuredAmount: getSecurityRetentionAmount(prFor, monthKey(month, year)),
-                actualDeducted: Number(rec.securityRetentionDeduct) || 0,
-                notes: rec.securityRetentionComment || '',
-              });
-            }
+            /* Refresh the Security Retention report rows (they come from the saved payroll). */
+            if (upsertRetentionTxn) upsertRetentionTxn();
           }}
           onRecordPayment={(rec) => upsertRec(prFor.id, month, year, rec)}
           onDelete={() => { removeRec(prFor.id, month, year); setPrFor(null); }}
@@ -3439,6 +3473,8 @@ function PayRollModal({
         absentCount,
         absentDeduction: absentDeduct,
         absentComment,
+        securityRetentionAmount: securityRetentionDeduct,
+        securityRetentionNote: securityRetentionComment,
       });
       payrollID = hrService.payrollIdFromSetupResponse(resp) || payrollID;
       setupPending = hrService.hrPendingInfo(resp);
@@ -3466,16 +3502,12 @@ function PayRollModal({
       const key = `${Number(year)}-${String(mNum).padStart(2, '0')}`;
       const serverRec = fresh?.[emp.id]?.[key];
       if (serverRec && serverRec.netPayable != null) {
-        /* Backend has no security-retention field yet: keep the retention
-           deduction on the record and take it out of the server's net, so the
-           payable (and the Make Payment limit) reflects the withheld amount. */
-        const retentionDed = Number(securityRetentionDeduct) || 0;
+        /* The backend stores the security retention (securityRetentionAmount) and
+           computes the net itself, so the server record is used as-is. */
         onSaveSetup({
           month, year, ...serverRec,
-          securityRetentionDeduct: retentionDed,
+          securityRetentionDeduct: Number(securityRetentionDeduct) || 0,
           securityRetentionComment,
-          totalDeductions: (Number(serverRec.totalDeductions) || 0) + retentionDed,
-          netPayable: (Number(serverRec.netPayable) || 0) - retentionDed,
         });
         toast('Payroll saved — proceed to Make Payment', 'success');
         setTab(1);
@@ -4713,6 +4745,16 @@ function EmployeeManagement({ loading = false, emps, setEmps, depts, desigs, nex
     loadPending();
   };
 
+  /* Security retention is a separate API call after the employee save. A failure
+     is shown as an error but does not undo the employee save. */
+  const saveRetentionSafely = async (employeeId, retention) => {
+    try {
+      await hrService.saveHrSecurityRetention({ employeeID: employeeId, retention });
+    } catch (e) {
+      toast(`Employee saved, but security retention was not saved: ${e.message}`, 'error');
+    }
+  };
+
   const saveNewEmployee = async (payload) => {
     try {
       const resp = await hrService.saveHrEmployee(payload);
@@ -4746,7 +4788,7 @@ function EmployeeManagement({ loading = false, emps, setEmps, depts, desigs, nex
         loadPending();
         return;
       }
-      hrService.setLocalRetentionSetup(payload.eid, payload.securityRetention);
+      if (payload.securityRetention?.enabled) await saveRetentionSafely(resp?.id, payload.securityRetention);
       await reloadEmps();
       setSub((payload.status || 'Active') === 'Active' ? 'active' : 'inactive');
       toast(`${getFullName(payload)} added`, 'success');
@@ -4771,7 +4813,10 @@ function EmployeeManagement({ loading = false, emps, setEmps, depts, desigs, nex
         markPending(payload.id, resp.pending, `${sectionLbl} for ${getFullName(payload)} sent for approval`);
         return;
       }
-      hrService.setLocalRetentionSetup(payload.eid, payload.securityRetention);
+      /* Save retention when it is on now, or was on before (so turning it off is sent too). */
+      if (payload.securityRetention?.enabled || editFor?.securityRetention?.enabled) {
+        await saveRetentionSafely(payload.id, payload.securityRetention);
+      }
       await reloadEmps();
       toast(`${getFullName(payload)} updated`, 'success');
       setEditFor(null);
