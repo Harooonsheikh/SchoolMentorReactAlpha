@@ -3422,6 +3422,8 @@ function ResourceLibrary({ toast, openConfirm, classesData = [] }) {
     }
   };
 
+  /* View → pehle details modal (PDF ka button usme hai); seedha PDF tab nahi khulta. */
+  const [viewRes, setViewRes] = useState(null);
  const viewFile = r => { if (r.fileUrl) window.open(resolveMediaUrl(r.fileUrl), '_blank', 'noopener'); else toast('No file attached to preview', 'info'); };
 const downloadFile = r => {
   if (!rlDownload) { toast('You do not have permission to download resources', 'error'); return; }
@@ -3547,7 +3549,7 @@ const downloadFile = r => {
                   {r.uploadedAt && <span className="rl-card-date"><i className="fa-regular fa-calendar"></i> {rlFmtDate(r.uploadedAt)}</span>}
                 </div>
                 <div className="rl-card-actions">
-                  <Tooltip text="View file"><button className="rl-act" onClick={() => viewFile(r)}><i className="fa-solid fa-eye"></i> View</button></Tooltip>
+                  <Tooltip text="View details"><button className="rl-act" onClick={() => setViewRes(r)}><i className="fa-solid fa-eye"></i> View</button></Tooltip>
                   {/* Permission na ho to button dikhta hai magar disabled. */}
                   <Tooltip text={rlDownload ? 'Download file' : 'You do not have Download permission'}><button className="rl-act" disabled={!rlDownload} style={!rlDownload ? RL_LOCKED : undefined} onClick={() => downloadFile(r)}><i className="fa-solid fa-download"></i> Download</button></Tooltip>
                   <Tooltip text={rlEdit ? 'Edit resource' : 'You do not have Edit permission'}><button className="rl-act" disabled={busy || !rlEdit} style={!rlEdit ? RL_LOCKED : undefined} onClick={() => { if (rlEdit) setModal({ mode: 'edit', resource: r }); }}><i className="fa-solid fa-pen"></i> Edit</button></Tooltip>
@@ -3567,6 +3569,11 @@ const downloadFile = r => {
         busy={busy}
         onClose={() => { if (!busy) setModal(null); }}
         onSave={save}
+      />
+      <ResourceViewModal
+        resource={viewRes}
+        onOpenPdf={viewFile}
+        onClose={() => setViewRes(null)}
       />
     </>
   );
@@ -3719,6 +3726,57 @@ function ResourceModal({ open, mode, resource, classesData = [], busy, onClose, 
               <i className={`fa-solid ${busy ? 'fa-spinner fa-spin' : 'fa-floppy-disk'}`}></i> {busy ? 'Saving…' : 'Save Resource'}
             </button>
           </Tooltip>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* Resource ki details — View button se khulta hai. Layout Release Details modal jaisa
+   (ho-* classes). PDF ka button item ke actions me hai (onOpenPdf). */
+function ResourceViewModal({ resource: r, onOpenPdf, onClose }) {
+  if (!r) return null;
+  const cat = rlCat(r.category);
+  return (
+    <div className="modal-overlay open" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="modal ho-detail-modal">
+        <div className="modal-header">
+          <div>
+            <div className="modal-title"><i className="fa-solid fa-file-pdf" style={{ marginRight: 8 }}></i> Resource Details — {r.title}</div>
+            <div className="modal-sub">Academic resource saved in your school's Resource Library.</div>
+          </div>
+          <Tooltip text="Close"><button className="modal-close" onClick={onClose} aria-label="Close"><i className="fa-solid fa-xmark"></i></button></Tooltip>
+        </div>
+        <div className="modal-body">
+          {/* summary cards */}
+          <div className="ho-sum-grid">
+            <div className="ho-sum" style={{ '--accent': '#1E40AF' }}><i className="fa-solid fa-chalkboard"></i><div><div className="ho-sum-v">{r.className || '—'}</div><div className="ho-sum-l">Class</div></div></div>
+            <div className="ho-sum" style={{ '--accent': '#16A34A' }}><i className="fa-solid fa-book"></i><div><div className="ho-sum-v">{r.subjectName || '—'}</div><div className="ho-sum-l">Subject</div></div></div>
+            <div className="ho-sum" style={{ '--accent': '#7C3AED' }}><i className="fa-solid fa-tag"></i><div><div className="ho-sum-v">{cat.label}</div><div className="ho-sum-l">Category</div></div></div>
+            <div className="ho-sum" style={{ '--accent': '#D97706' }}><i className="fa-solid fa-paperclip"></i><div><div className="ho-sum-v" title={r.fileName || ''} style={{ fontSize: 14, maxWidth: 170, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.fileName || 'No attachment'}</div><div className="ho-sum-l">Attachment</div></div></div>
+          </div>
+
+          <div className="ho-sec">
+            <div className="ho-item">
+              <div className="ho-item-main">
+                <div className="ho-item-title">{r.title} <span className="rl-badge" style={{ background: cat.color + '14', color: cat.color }}>{cat.label}</span></div>
+                {r.description && <div className="ho-item-sub">{r.description}</div>}
+                {r.uploadedAt && (
+                  <div className="ho-item-meta">
+                    <span><i className="fa-regular fa-calendar"></i> Uploaded {rlFmtDate(r.uploadedAt)}</span>
+                  </div>
+                )}
+              </div>
+              <div className="ho-item-actions">
+                <Tooltip text={r.fileUrl ? 'Open the PDF in a new tab' : 'No PDF attached'}>
+                  <button className="rl-act" disabled={!r.fileUrl} style={!r.fileUrl ? RL_LOCKED : undefined} onClick={() => onOpenPdf(r)}><i className="fa-solid fa-file-pdf"></i> View PDF</button>
+                </Tooltip>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div className="modal-footer">
+          <Tooltip text="Close"><button className="btn btn-secondary" onClick={onClose}>Close</button></Tooltip>
         </div>
       </div>
     </div>

@@ -49,7 +49,12 @@ const BRANCH1_ONLY_NAV = new Set(['mentorai', 'crm', 'appraisal', 'trainings', '
    nav id → wo branchID jinhein (branch 1 ke ilawa) ye module dikhna chahiye.
    Branch par khulne ke baad bhi module wahi user permission maanta hai jo
    branch 1 par — sirf branch ki rukawat hatti hai, permission ki nahi. */
-const EXTRA_NAV_BRANCHES = {};
+const EXTRA_NAV_BRANCHES = {
+  crm: ['15'],
+  appraisal: ['15'],
+  trainings: ['15'],
+  notifications: ['15'],
+};
 
 /* Modules that are live ONLY on the listed branchIDs and hidden on every other
    branch. Unlike BRANCH1_ONLY_NAV, the user's permission still applies on the
