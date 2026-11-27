@@ -21,6 +21,7 @@ import { activeSessionName, apiMessage, approvalPending } from '../../utils/apiC
 import IdCardDesigner from '../id-cards/IdCardDesigner';
 import IdCardQuickView from '../id-cards/IdCardQuickView';
 import * as feeService from '../services/feeService';
+import { apiGetSignatures } from '../pages/Settings/settingsStore';
 import DiscountTypeToggle from './DiscountTypeToggle';
 import { DISCOUNT_TYPE_AMOUNT, DISCOUNT_TYPE_PERCENTAGE, calcDiscount } from '../utils/feeDiscount';
 
@@ -1203,6 +1204,38 @@ function buildStuSchoolReportHTML(classes, school, isBW = false, format = 'pdf')
 }
 
 /* ─── Certificate PDF (A4 portrait) ─── */
+/* Settings › Signature Management: signatures marked for "Student Certificates"
+   (active only). Loaded once and cached so the sync certificate builders can
+   read them; a failed load just means certificates keep the blank line. */
+let _stuCertSigs = null;
+let _stuCertSigsReq = null;
+function loadStuCertSignatures() {
+  if (_stuCertSigs) return Promise.resolve(_stuCertSigs);
+  if (!_stuCertSigsReq) {
+    _stuCertSigsReq = apiGetSignatures()
+      .then(list => { _stuCertSigs = list.filter(g => g.status === 'active' && g.imageDataUrl && (g.documents || []).includes('student_certificates')); return _stuCertSigs; })
+      .catch(() => { _stuCertSigsReq = null; return []; });
+  }
+  return _stuCertSigsReq;
+}
+/* Signature image per certificate slot. Each uploaded signature is used for ONE slot only:
+   exact staff-name match first, then designation (Principal / Director / Teacher). No match → blank line. */
+function stuAssignSigImages(sigs) {
+  const list = _stuCertSigs || [];
+  const used = new Set();
+  const norm = (v) => String(v || '').trim().toLowerCase();
+  const rxOf = (role) => (role === 'Principal' ? /principal/i : role === 'Director' ? /director/i : /teacher/i);
+  sigs.forEach(g => { g.img = ''; });
+  sigs.forEach(g => {
+    const hit = norm(g.name) && list.find(x => !used.has(x.id) && norm(x.staffName) === norm(g.name));
+    if (hit) { used.add(hit.id); g.img = hit.imageDataUrl; }
+  });
+  sigs.forEach(g => {
+    if (g.img) return;
+    const hit = list.find(x => !used.has(x.id) && rxOf(g.role).test(x.designation || '') && !(g.role === 'Principal' && /vice|assistant/i.test(x.designation || '')));
+    if (hit) { used.add(hit.id); g.img = hit.imageDataUrl; }
+  });
+}
 function buildStuCertHTML(s, cls, school, type, style, opts) {
   const isBW = style === 'bw';
   const fullName = stuFullName(s);
@@ -1280,6 +1313,7 @@ function buildStuCertHTML(s, cls, school, type, style, opts) {
   if (opts.sigDirector)  sigs.push({ name: opts.nameDirector  || 'Director',      role: 'Director' });
   if (opts.sigTeacher)   sigs.push({ name: opts.nameTeacher   || 'Class Teacher', role: 'Class Teacher' });
   if (!sigs.length)      sigs.push({ name: opts.namePrincipal || 'Principal',    role: 'Principal' });
+  stuAssignSigImages(sigs);
 
   /* ── Decorative SVGs ── */
   const cornerSvg  = (slot) => `<svg class="corner ${slot}" viewBox="0 0 70 70" fill="none"><path d="M4 4 L4 32 Q4 4 32 4 Z" fill="none" stroke="#2D7DD2" stroke-width="2"/><path d="M4 4 L28 4 Q4 4 4 28 Z" fill="rgba(26,188,205,0.15)"/><circle cx="8" cy="8" r="3" fill="#1ABCCD"/><path d="M14 4 L4 4 L4 14" stroke="#F5C842" stroke-width="1.5" fill="none"/></svg>`;
@@ -1293,7 +1327,7 @@ function buildStuCertHTML(s, cls, school, type, style, opts) {
     : defaultMark;
   const sealSvg    = `<svg width="28" height="28" viewBox="0 0 64 64" fill="none"><polygon points="32,10 60,24 32,32 4,24" fill="#2D7DD2"/><rect x="56" y="24" width="3" height="9" rx="1.5" fill="#4FA3E8"/><circle cx="57.5" cy="35" r="2.5" fill="#1ABCCD"/><rect x="16" y="34" width="32" height="16" rx="4" fill="none" stroke="#2D7DD2" stroke-width="2"/></svg>`;
   const sealBlock  = `<div class="seal">${sealSvg}<div class="seal-text">${stuEsc(school?.name || 'School')} Official Seal</div></div>`;
-  const sigBlock   = (g) => `<div class="sign-block"><div class="sign-line"></div><div class="sign-label">${stuEsc(g.name)}</div><div class="sign-sub">${stuEsc(g.role)}</div><div class="sign-sub">${stuEsc(school?.name || 'School')}</div></div>`;
+  const sigBlock   = (g) => `<div class="sign-block">${g.img ? `<img class="sign-img" src="${stuEsc(g.img)}" alt="">` : ''}<div class="sign-line"></div><div class="sign-label">${stuEsc(g.name)}</div><div class="sign-sub">${stuEsc(g.role)}</div><div class="sign-sub">${stuEsc(school?.name || 'School')}</div></div>`;
   let sigBlocks;
   if (sigs.length === 1) {
     sigBlocks = sigBlock(sigs[0]) + sealBlock;
@@ -1346,6 +1380,7 @@ function buildStuCertHTML(s, cls, school, type, style, opts) {
     .status-ok{background:#E6F7F0;color:#1A7A4A;font-size:10px;font-weight:700;padding:3px 10px;border-radius:20px;letter-spacing:.4px}
     .cert-sign-wrap{padding:30px 70px 44px;display:flex;align-items:flex-end;justify-content:space-between;gap:18px}
     .sign-block{display:flex;flex-direction:column;align-items:center;gap:6px;flex:1}
+    .sign-img{height:52px;max-width:160px;object-fit:contain;display:block;margin-bottom:4px}
     .sign-line{width:160px;border-bottom:1.5px solid #0D2B5E}
     .sign-label{font-size:11px;font-weight:600;color:#0D2B5E;letter-spacing:.5px;text-align:center}
     .sign-sub{font-size:10px;color:#6B8BAA;text-align:center}
@@ -1415,6 +1450,7 @@ const STU_REP_CATS = [
   { id: 'age',      name: 'Age-wise Report',      ic: 'fa-cake-candles',  desc: 'Students grouped by age' },
   { id: 'guardian', name: 'Guardian-wise Report', ic: 'fa-user-shield',   desc: 'Students grouped under their guardian / father' },
   { id: 'year',     name: 'Year-wise Report',     ic: 'fa-calendar-days', desc: 'Students grouped by admission year' },
+  { id: 'newadm',   name: 'New Admission Report', ic: 'fa-user-plus',     desc: 'Students admitted this month with their fee details' },
 ];
 
 /* Custom report columns — get(s, c) → cell text. `mono` = monospace, `ctr` = centered. */
@@ -1457,6 +1493,25 @@ function stuAdmYear(s) {
   const d = new Date(s.admdate);
   return isNaN(d) ? null : d.getFullYear();
 }
+/* New admission report — is mahine (current month) admit hone wale students + unki fee (discount) details. */
+function stuIsThisMonth(s) {
+  if (!s.admdate) return false;
+  const d = new Date(s.admdate);
+  const now = new Date();
+  return !isNaN(d) && d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
+}
+const stuDiscTotal = (s) => Object.values(s._disc || {}).reduce((a, v) => a + (Number(v) || 0), 0);
+const stuDiscText = (s) => Object.entries(s._disc || {}).filter(([, v]) => Number(v) > 0)
+  .map(([h, v]) => `${h}: ${Number(v).toLocaleString()}`).join(', ');
+const stuAmt = (n) => Number(n || 0).toLocaleString();
+/* Class ki fee heads (feeMap[gradeId]) − student ki discounts = net fee. heads undefined = abhi load ho rahi hain. */
+function stuFeeOf(s, heads) {
+  const list = Array.isArray(heads) ? heads : [];
+  const total = list.reduce((a, h) => a + (Number(h.amount) || 0), 0);
+  const disc = stuDiscTotal(s);
+  return { loaded: Array.isArray(heads), list, total, disc, net: Math.max(0, total - disc) };
+}
+const stuMonthLabel = () => new Date().toLocaleString('en', { month: 'long', year: 'numeric' });
 function stuRepDoc(title, bodyHtml, school, isBW, format, orientation = 'portrait') {
   return buildStandardReportHtml({
     title: stuEsc(title), format, isColor: !isBW, bodyHtml,
@@ -1613,6 +1668,22 @@ function buildStuYearReportHTML(classes, school, isBW = false, format = 'pdf', y
   return stuRepDoc('Year-wise Student Report', bodyHtml, school, isBW, format);
 }
 
+/* New admissions (current month): class/section wise list with fee details. */
+function buildStuNewAdmissionHTML(classes, school, isBW = false, format = 'pdf', feeMap = {}) {
+  const isColor = !isBW, color = '#1E3A8A';
+  const rows = classes.flatMap(c => c.students.filter(stuIsThisMonth).map(s => ({ s, c, f: stuFeeOf(s, feeMap[c._gradeId]) })));
+  const sum = (k) => rows.reduce((a, r) => a + r.f[k], 0);
+  const tbody = rows.map(({ s, c, f }, i) => `<tr><td class="c">${i + 1}</td><td class="mono">${stuEsc(s.reg)}</td><td><b>${stuEsc(stuFullName(s))}</b><div style="font-size:9px;color:#64748B">S/D of ${stuEsc(s.father || '—')} · ${stuEsc(s.mobile || '—')}</div></td><td class="c">${stuEsc(c.cls)} – ${stuEsc(c.sec)}</td><td class="c">${stuFmtDate(s.admdate)}</td><td>${f.list.length ? f.list.map(h => `${stuEsc(h.name)}: ${stuAmt(h.amount)}`).join('<br>') : '—'}${stuHasDiscount(s) ? `<div style="font-size:9px;color:#B91C1C">Discount — ${stuEsc(stuDiscText(s))}</div>` : ''}</td><td class="c">${stuAmt(f.total)}</td><td class="c">${f.disc ? stuAmt(f.disc) : '—'}</td><td class="c"><b>${stuAmt(f.net)}</b></td></tr>`).join('');
+  const bodyHtml = `<style>${stuReportTableCSS(isColor, color)}</style>
+    ${stuRepKpis([['New Admissions', rows.length], ['Total Fee', stuAmt(sum('total'))], ['Total Discount', stuAmt(sum('disc'))], ['Net Fee', stuAmt(sum('net'))]])}
+    <table class="tbl">
+      <thead><tr><th class="c" style="width:22px">#</th><th style="width:62px">Reg No</th><th>Student</th><th class="c" style="width:70px">Class</th><th class="c" style="width:58px">Admitted</th><th>Fee Structure</th><th class="c" style="width:58px">Total Fee</th><th class="c" style="width:56px">Discount</th><th class="c" style="width:62px">Net Fee</th></tr></thead>
+      <tbody>${tbody || '<tr><td colspan="9" style="text-align:center;padding:24px;color:#94A3B8">No students were admitted this month.</td></tr>'}
+      ${rows.length ? `<tr style="font-weight:800;background:#F1F5F9"><td colspan="6" style="text-align:right">Grand Total</td><td class="c">${stuAmt(sum('total'))}</td><td class="c">${stuAmt(sum('disc'))}</td><td class="c">${stuAmt(sum('net'))}</td></tr>` : ''}</tbody>
+    </table>`;
+  return stuRepDoc(`New Admission Report — ${stuMonthLabel()}`, bodyHtml, school, isBW, format, 'landscape');
+}
+
 /* Custom: one flat list — only the chosen columns, rows already filtered by the caller. */
 function buildStuCustomReportHTML(rows, colIds, school, isBW = false, format = 'pdf', filterNote = '') {
   const isColor = !isBW, color = '#1E3A8A';
@@ -1654,11 +1725,16 @@ function StuRepTable({ head, rows, foot, empty = 'No students.' }) {
   );
 }
 const StuRepKpis = ({ items }) => (
-  <div className="stu-rep-kpis">{items.map(([l, v]) => <div key={l} className="stu-rep-kpi"><div className="l">{l}</div><div className="v">{v}</div></div>)}</div>
+  <div className="stu-rep-kpis">{items.map(([l, v], i) => (
+    <div key={l} className={`stu-rep-kpi ${['', 'g', 'a'][i % 3]}`}>
+      <div className="stu-rep-kpi-top"><span className="l">{l}</span><span className="stu-rep-kpi-ic"><i className={`fa-solid ${['fa-user-graduate', 'fa-chart-simple', 'fa-layer-group'][i % 3]}`}></i></span></div>
+      <div className="v">{v}</div>
+    </div>
+  ))}</div>
 );
 const StuRepBand = ({ left, right }) => <div className="stu-rep-band"><span>{left}</span><small>{right}</small></div>;
 
-function StuRepScreen({ cur, scoped, gSub, gNames, onlyMulti, year, customRows, cols }) {
+function StuRepScreen({ cur, scoped, gSub, gNames, onlyMulti, year, customRows, cols, feeMap }) {
   const tallyOf = (students) => students.reduce((a, s) => { a[stuGenderKey(s.gender)] += 1; a.total += 1; return a; }, stuRepTally());
   const all = scoped.flatMap(c => c.students);
 
@@ -1760,6 +1836,28 @@ function StuRepScreen({ cur, scoped, gSub, gNames, onlyMulti, year, customRows, 
     );
   }
 
+  if (cur === 'newadm') {
+    const rows = scoped.flatMap(c => c.students.filter(stuIsThisMonth).map(s => ({ s, c, f: stuFeeOf(s, feeMap?.[c._gradeId]) })));
+    const sum = (k) => rows.reduce((a, r) => a + r.f[k], 0);
+    const money = (f, v) => (f.loaded ? stuAmt(v) : '…');
+    return (
+      <>
+        <StuRepKpis items={[['New Admissions', rows.length], ['Total Fee', stuAmt(sum('total'))], ['Total Discount', stuAmt(sum('disc'))], ['Net Fee', stuAmt(sum('net'))]]} />
+        <StuRepTable
+          head={[{ label: '#', c: true, w: 40 }, { label: 'Reg No' }, { label: 'Student' }, { label: 'Class', c: true }, { label: 'Admitted', c: true }, { label: 'Fee Structure' }, { label: 'Total Fee', c: true }, { label: 'Discount', c: true }, { label: 'Net Fee', c: true }]}
+          rows={rows.map(({ s, c, f }, i) => [i + 1, s.reg,
+            <><b>{stuFullName(s)}</b><div style={{ fontSize: 11, color: 'var(--text-muted)' }}>S/D of {stuRepCell(s.father)} · {stuRepCell(s.mobile)}</div></>,
+            `${c.cls} – ${c.sec}`, stuFmtDate(s.admdate),
+            <>{f.loaded ? (f.list.length ? f.list.map(h => <div key={h.feeStructureID + h.name}>{h.name}: <b>{stuAmt(h.amount)}</b></div>) : '—') : 'Loading…'}
+              {stuHasDiscount(s) && <div style={{ fontSize: 11, color: '#B91C1C' }}>Discount — {stuDiscText(s)}</div>}</>,
+            money(f, f.total), f.disc ? stuAmt(f.disc) : '—', <b>{money(f, f.net)}</b>])}
+          foot={['', '', '', '', '', 'Grand Total', stuAmt(sum('total')), stuAmt(sum('disc')), stuAmt(sum('net'))]}
+          empty="No students were admitted this month."
+        />
+      </>
+    );
+  }
+
   /* year-wise */
   const by = new Map();
   all.forEach(s => {
@@ -1805,6 +1903,7 @@ function StudentReportsTab({ loading, classes, school, toast }) {
   const [cDisc, setCDisc]         = useState('');
   const [cols, setCols]           = useState(STU_REP_DEFAULT_COLS);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [feeMap, setFeeMap]       = useState({});          // new-admission report: gradeId → class fee heads
 
   const brandSchool = (branch) => ({
     ...school,
@@ -1829,26 +1928,56 @@ function StudentReportsTab({ loading, classes, school, toast }) {
   const meta = STU_REP_CATS.find(r => r.id === cur);
   const titleFor = () => (cur === 'gender' && gSub !== 'summary'
     ? `${gSub === 'female' ? 'Female' : 'Male'} Students Report` : meta.name);
-  const build = (sch, isBW, format) => {
+  /* New admission report ke liye un classes ki fee heads laao jin me is mahine admission hui. */
+  const loadFees = async () => {
+    const need = [...new Set(scoped.filter(c => c.students.some(stuIsThisMonth)).map(c => c._gradeId).filter(Boolean))].filter(id => feeMap[id] === undefined);
+    if (!need.length) return feeMap;
+    const got = await Promise.all(need.map(id => studentService.getStuFeeHeads(id).then(h => [id, h]).catch(() => [id, []])));
+    const merged = { ...feeMap, ...Object.fromEntries(got) };
+    setFeeMap(merged);
+    return merged;
+  };
+  useEffect(() => { if (cur === 'newadm') loadFees(); }, [cur, scoped]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const build = (sch, isBW, format, fm = feeMap) => {
     if (cur === 'gender')   return gSub === 'summary' ? buildStuGenderReportHTML(scoped, sch, isBW, format)
                                                       : buildStuGenderListHTML(scoped, gSub, sch, isBW, format, gNames);
     if (cur === 'age')      return buildStuAgeReportHTML(scoped, sch, isBW, format);
     if (cur === 'guardian') return buildStuGuardianReportHTML(scoped, sch, isBW, format, onlyMulti);
     if (cur === 'year')     return buildStuYearReportHTML(scoped, sch, isBW, format, year);
+    if (cur === 'newadm')   return buildStuNewAdmissionHTML(scoped, sch, isBW, format, fm);
     return buildStuCustomReportHTML(customRows, cols, sch, isBW, format, customNote);
   };
 
   const doDownload = async ({ style, format }) => {
     const branch = await fetchReportHeader();
-    const html = build(brandSchool(branch), style === 'bw', format);
+    const fm = cur === 'newadm' ? await loadFees() : feeMap;
+    const html = build(brandSchool(branch), style === 'bw', format, fm);
     stuDeliverKitReport(titleFor(), html, format, toast);
     toast(`${titleFor()} (${style.toUpperCase()} · ${format.toUpperCase()}) ready`, 'success');
     setPickerOpen(false);
   };
   const toggleCol = (id) => setCols(p => (p.includes(id) ? p.filter(x => x !== id) : [...p, id]));
 
-  const lbl = { fontSize: 11, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.4px', color: 'var(--text-muted)' };
-  const field = (label, node) => (<div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}><span style={lbl}>{label}</span>{node}</div>);
+  /* Fee reports jaisa: label + chevron wala select. */
+  const field = (label, node) => (
+    <div className="fee-field">
+      <span className="fee-label">{label}</span>
+      {node && node.type === 'select'
+        ? <div className="fee-select-wrap">{node}<i className="fa-solid fa-chevron-down"></i></div>
+        : node}
+    </div>
+  );
+  /* Fee reports jaisa segmented (pill) toggle. */
+  const seg = (opts, val, onPick) => (
+    <div className="stu-rep-seg">
+      {opts.map(([id, icon, text]) => (
+        <button key={id} type="button" className={`stu-rep-seg-btn${val === id ? ' active' : ''}`} onClick={() => onPick(id)}>
+          <i className={`fa-solid ${icon}`}></i> {text}
+        </button>
+      ))}
+    </div>
+  );
 
   return (
     <>
@@ -1859,23 +1988,47 @@ function StudentReportsTab({ loading, classes, school, toast }) {
         .stu-rep-chip.active{border-color:#1E3A8A;background:linear-gradient(135deg,rgba(30,58,138,.06),transparent);box-shadow:0 0 0 3px rgba(30,58,138,.1)}
         .stu-rep-chip-ic{width:38px;height:38px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:15px;color:#fff;flex-shrink:0;background:linear-gradient(135deg,#1E3A8A,#2563EB)}
         .stu-rep-chip-name{font-size:13px;font-weight:800;color:var(--text-primary);line-height:1.2}
-        .stu-rep-bar{display:flex;flex-wrap:wrap;align-items:flex-end;gap:12px;padding:12px 14px;margin-bottom:12px}
-        .stu-rep-cols{display:flex;flex-wrap:wrap;gap:6px 14px;padding:0 14px 12px}
-        .stu-rep-cols label{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;color:var(--text-secondary);cursor:pointer}
-        .stu-rep-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;padding:0 14px 12px}
-        .stu-rep-kpi{border:1.5px solid var(--border-light);border-radius:10px;padding:10px 14px;background:var(--bg-card)}
-        .stu-rep-kpi .l{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.4px;color:var(--text-muted)}
-        .stu-rep-kpi .v{font-size:20px;font-weight:800;color:var(--text-primary);margin-top:2px}
-        .stu-rep-band{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:8px 14px;margin:6px 14px 8px;border-radius:8px;background:var(--bg-muted);font-size:12px;font-weight:800;color:var(--text-primary)}
+        .stu-rep-seg{display:flex;width:100%;background:var(--bg-card);border:1.5px solid var(--border-light);border-radius:var(--radius-full,999px);padding:5px;margin-bottom:14px;box-shadow:var(--shadow-sm)}
+        .stu-rep-seg-btn{flex:1;display:flex;align-items:center;justify-content:center;gap:7px;padding:10px 16px;border:none;background:transparent;border-radius:var(--radius-full,999px);font-family:var(--font-body);font-size:13px;font-weight:700;color:var(--text-muted);cursor:pointer;transition:var(--tr,all .2s ease);white-space:nowrap}
+        .stu-rep-seg-btn:hover:not(.active){color:var(--text-primary)}
+        .stu-rep-seg-btn.active{background:linear-gradient(135deg,#1E3A8A,#1E40AF);color:#fff;box-shadow:0 4px 12px rgba(30,58,138,.3)}
+        .stu-rep-seg-btn i{font-size:12px}
+        .stu-rep-bar{display:flex;flex-wrap:wrap;align-items:flex-end;gap:14px;padding:18px 20px}
+        .stu-rep-bar .fee-field{display:flex;flex-direction:column;gap:6px;min-width:170px}
+        .stu-rep-cols{display:flex;flex-wrap:wrap;gap:8px;padding:14px 20px 18px;border-top:1px solid var(--border-light)}
+        .stu-rep-cols-lbl{width:100%;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.4px;color:var(--text-muted)}
+        .stu-rep-col{display:inline-flex;align-items:center;gap:8px;padding:8px 14px;border:1.5px solid var(--border-light);border-radius:10px;background:var(--bg-card);font-family:var(--font-body);font-size:12.5px;font-weight:700;color:var(--text-secondary);cursor:pointer;transition:all .18s ease;user-select:none}
+        .stu-rep-col input[type=checkbox]{appearance:none;-webkit-appearance:none;width:18px;height:18px;margin:0;border:1.8px solid var(--border-med,#94A3B8);border-radius:5px;background:var(--bg-card);cursor:pointer;display:inline-grid;place-content:center;flex-shrink:0;transition:all .15s ease}
+        .stu-rep-col input[type=checkbox]::after{content:'';width:9px;height:5px;border-left:2.2px solid #fff;border-bottom:2.2px solid #fff;transform:rotate(-45deg) scale(0);margin-top:-2px;transition:transform .15s ease}
+        .stu-rep-col input[type=checkbox]:checked{background:#1E3A8A;border-color:#1E3A8A}
+        .stu-rep-col input[type=checkbox]:checked::after{transform:rotate(-45deg) scale(1)}
+        .stu-rep-col input[type=checkbox]:focus-visible{box-shadow:0 0 0 3px rgba(30,58,138,.25)}
+        .stu-rep-col:hover{border-color:#1E3A8A;color:#1E3A8A}
+        .stu-rep-col.on{border-color:#1E3A8A;background:rgba(30,58,138,.06);color:#1E3A8A}
+        .stu-rep-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:14px;padding:18px 20px 6px}
+        .stu-rep-kpi{position:relative;overflow:hidden;border:1.5px solid var(--border-light);border-radius:14px;padding:14px 16px;background:var(--bg-card);transition:transform .2s ease,box-shadow .2s ease,border-color .2s ease}
+        .stu-rep-kpi:hover{transform:translateY(-3px);box-shadow:0 12px 28px rgba(15,23,42,.10);border-color:var(--border-med)}
+        .stu-rep-kpi::before{content:'';position:absolute;inset:0 0 auto 0;height:4px;border-radius:14px 14px 0 0;background:linear-gradient(90deg,#1E3A8A,#2563EB)}
+        .stu-rep-kpi.g::before{background:linear-gradient(90deg,#16A34A,#22C55E)}
+        .stu-rep-kpi.a::before{background:linear-gradient(90deg,#D97706,#F59E0B)}
+        .stu-rep-kpi-top{display:flex;align-items:center;justify-content:space-between;gap:10px}
+        .stu-rep-kpi .l{font-size:11px;font-weight:800;letter-spacing:.3px;text-transform:uppercase;color:var(--text-muted)}
+        .stu-rep-kpi-ic{width:30px;height:30px;border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:13px;background:rgba(30,58,138,.10);color:#1E3A8A}
+        .stu-rep-kpi.g .stu-rep-kpi-ic{background:rgba(22,163,74,.10);color:#16A34A}
+        .stu-rep-kpi.a .stu-rep-kpi-ic{background:rgba(217,119,6,.10);color:#D97706}
+        .stu-rep-kpi .v{font-size:22px;font-weight:800;color:var(--text-primary);margin-top:10px;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+        .stu-rep-band{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:0 20px;margin:14px 0 8px;font-size:12.5px;font-weight:800;color:var(--text-secondary)}
         .stu-rep-band small{font-size:11px;font-weight:700;color:var(--text-muted)}
-        .stu-rep-tblwrap{margin:0 14px 14px;overflow:auto;max-height:560px;border:1.5px solid var(--border-light);border-radius:10px}
-        .stu-rep-tbl{width:100%;border-collapse:collapse;font-size:12.5px}
-        .stu-rep-tbl th{position:sticky;top:0;z-index:1;background:var(--bg-muted);color:var(--text-secondary);text-align:left;padding:9px 12px;font-size:11px;text-transform:uppercase;letter-spacing:.3px;font-weight:800;white-space:nowrap}
-        .stu-rep-tbl td{padding:9px 12px;border-top:1px solid var(--border-light);color:var(--text-primary);vertical-align:top}
+        .stu-rep-tblwrap{margin:12px 20px 18px;overflow:auto;max-height:560px;background:var(--bg-card);border:1px solid var(--border-light);border-radius:var(--radius-md,12px)}
+        .stu-rep-tbl{width:100%;border-collapse:collapse;font-size:12.5px;color:var(--text-primary)}
+        .stu-rep-tbl th{position:sticky;top:0;z-index:1;background:var(--bg-muted);color:var(--text-secondary);text-align:left;padding:9px 12px;font-size:10.5px;text-transform:uppercase;letter-spacing:.4px;font-weight:800;white-space:nowrap;border-bottom:1px solid var(--border-light)}
+        .stu-rep-tbl td{padding:9px 12px;border-bottom:1px solid var(--border-light);color:var(--text-primary);vertical-align:middle}
+        .stu-rep-tbl tbody tr:last-child td{border-bottom:none}
         .stu-rep-tbl tbody tr:hover td{background:var(--bg-muted)}
         .stu-rep-tbl .c{text-align:center}
-        .stu-rep-tbl tfoot td{font-weight:800;background:var(--bg-muted)}
-        .stu-rep-note{padding:0 14px 14px;font-size:12px;color:var(--text-muted)}
+        .stu-rep-tbl tfoot td{font-weight:800;background:var(--bg-muted);border-top:2px solid var(--border-light);border-bottom:none}
+        .stu-rep-note{padding:0 20px 18px;font-size:12px;color:var(--text-muted)}
+        @media (max-width:768px){.stu-rep-seg{flex-wrap:wrap;gap:6px;border-radius:14px;padding:6px}.stu-rep-seg-btn{flex:1 1 calc(50% - 6px);min-width:0;font-size:12px;padding:11px 10px;border-radius:10px;white-space:normal}}
         @media (max-width:640px){.stu-rep-chips{grid-template-columns:1fr}}
       `}</style>
 
@@ -1890,31 +2043,26 @@ function StudentReportsTab({ loading, classes, school, toast }) {
         ))}
       </div>
 
+      {cur === 'gender' && seg([
+        ['summary', 'fa-chart-pie', 'Summary (counts)'],
+        ['male', 'fa-person', 'Male students list'],
+        ['female', 'fa-person-dress', 'Female students list'],
+      ], gSub, setGSub)}
+      {cur === 'gender' && gSub !== 'summary' && seg([
+        ['with', 'fa-id-card', 'With names'],
+        ['without', 'fa-eye-slash', 'Without names'],
+      ], gNames ? 'with' : 'without', (v) => setGNames(v === 'with'))}
+      {cur === 'guardian' && seg([
+        ['all', 'fa-list', 'All guardians'],
+        ['multi', 'fa-people-roof', 'Siblings only (2+ children)'],
+      ], onlyMulti ? 'multi' : 'all', (v) => setOnlyMulti(v === 'multi'))}
+
       <div className="fee-section">
         <div className="stu-rep-bar">
           {field('Class / Section', (
             <select className="fee-select" value={scope} onChange={(e) => setScope(e.target.value)}>
               <option value="">All classes</option>
               {classes.map(c => <option key={c.key} value={c.key}>{c.cls} ({c.sec})</option>)}
-            </select>
-          ))}
-          {cur === 'gender' && field('Show', (
-            <select className="fee-select" value={gSub} onChange={(e) => setGSub(e.target.value)}>
-              <option value="summary">Summary (counts)</option>
-              <option value="male">Male students list</option>
-              <option value="female">Female students list</option>
-            </select>
-          ))}
-          {cur === 'gender' && gSub !== 'summary' && field('Student names', (
-            <select className="fee-select" value={gNames ? 'with' : 'without'} onChange={(e) => setGNames(e.target.value === 'with')}>
-              <option value="with">With names</option>
-              <option value="without">Without names</option>
-            </select>
-          ))}
-          {cur === 'guardian' && field('Show', (
-            <select className="fee-select" value={onlyMulti ? 'multi' : 'all'} onChange={(e) => setOnlyMulti(e.target.value === 'multi')}>
-              <option value="all">All guardians</option>
-              <option value="multi">Siblings only (2+ children)</option>
             </select>
           ))}
           {cur === 'year' && field('Admission year', (
@@ -1956,9 +2104,11 @@ function StudentReportsTab({ loading, classes, school, toast }) {
 
         {cur === 'custom' && (
           <div className="stu-rep-cols">
-            <span style={{ ...lbl, width: '100%' }}>Columns ({cols.length} selected)</span>
+            <span className="stu-rep-cols-lbl">Columns ({cols.length} selected)</span>
             {STU_REP_COLS.map(c => (
-              <label key={c.id}><input type="checkbox" checked={cols.includes(c.id)} onChange={() => toggleCol(c.id)} /> {c.label}</label>
+              <label key={c.id} className={`stu-rep-col${cols.includes(c.id) ? ' on' : ''}`}>
+                <input type="checkbox" checked={cols.includes(c.id)} onChange={() => toggleCol(c.id)} /> {c.label}
+              </label>
             ))}
           </div>
         )}
@@ -1970,7 +2120,7 @@ function StudentReportsTab({ loading, classes, school, toast }) {
         ) : cur === 'custom' && cols.length === 0 ? (
           <div className="stu-empty"><div className="stu-empty-title">Select at least one column</div></div>
         ) : (
-          <StuRepScreen cur={cur} scoped={scoped} gSub={gSub} gNames={gNames} onlyMulti={onlyMulti} year={year} customRows={customRows} cols={cols} />
+          <StuRepScreen cur={cur} scoped={scoped} gSub={gSub} gNames={gNames} onlyMulti={onlyMulti} year={year} customRows={customRows} cols={cols} feeMap={feeMap} />
         )}
       </div>
 
@@ -5912,6 +6062,8 @@ function StuBulkIdModal({ cls, school, onClose, onDownload }) {
    signatures, style toggle (color/BW), live preview.
    ═══════════════════════════════════════════════════════════════════ */
 function StuCertModal({ cfg, student, cls, school, onClose, onDownload }) {
+  const [, setSigsReady] = useState(0);
+  useEffect(() => { let alive = true; loadStuCertSignatures().then(() => { if (alive) setSigsReady(n => n + 1); }); return () => { alive = false; }; }, []);
   const [type, setType] = useState(cfg.type || 'appreciation');
   const def = STU_CERT_DEFAULTS[type] || STU_CERT_DEFAULTS.appreciation;
   const [title, setTitle] = useState(def.title);
@@ -6184,6 +6336,7 @@ function StuCertPreview({ student: s, cls, school, type, style, opts }) {
   if (opts.sigDirector) sigs.push({ name: opts.nameDirector  || 'Director',      role: 'Director' });
   if (opts.sigTeacher)  sigs.push({ name: opts.nameTeacher   || 'Class Teacher', role: 'Class Teacher' });
   if (!sigs.length)     sigs.push({ name: opts.namePrincipal || 'Principal',    role: 'Principal' });
+  stuAssignSigImages(sigs);
 
   return (
     <div className={`stu-cert-prv${isBW ? ' stu-cert-prv--bw' : ''}`}>
@@ -6270,6 +6423,7 @@ function StuCertPreview({ student: s, cls, school, type, style, opts }) {
         {(() => {
           const blocks = sigs.map((g, idx) => (
             <div key={idx} className="stu-cert-prv-sig">
+              {g.img && <img src={g.img} alt="" style={{ height: 34, maxWidth: 96, objectFit: 'contain', display: 'block', marginBottom: 3 }} />}
               <div className="stu-cert-prv-sigline" />
               <div className="stu-cert-prv-signame">{g.name}</div>
               <div className="stu-cert-prv-sigrole">{g.role}</div>

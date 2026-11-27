@@ -23,7 +23,7 @@ export default function SignatureFormModal({ signature, onClose, onSave, toast }
   const [imageFile,    setImageFile]    = useState(null); // raw File for multipart upload
   const [fileName,     setFileName]     = useState('');
   const [fileSize,     setFileSize]     = useState('');
-  const [documents,    setDocuments]    = useState(signature?.documents || DOCUMENT_OPTIONS.map(d => d.id));
+  const [documents,    setDocuments]    = useState((signature?.documents || DOCUMENT_OPTIONS.map(d => d.id)).filter(id => DOCUMENT_OPTIONS.some(d => d.id === id)));
   const [touched,      setTouched]      = useState(false);
 
   /* Load branch employees for the staff dropdown. On add, default to the first

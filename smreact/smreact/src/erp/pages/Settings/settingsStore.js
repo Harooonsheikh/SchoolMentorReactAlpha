@@ -196,7 +196,7 @@ export async function apiGetEmployees() {
 
 /* Documents a signature can be applied to. */
 export const DOCUMENT_OPTIONS = [
-  { id: 'result_cards',           label: 'Result Cards' },
+  // { id: 'result_cards',           label: 'Result Cards' },   // hidden — option removed from Signature Management
   { id: 'student_certificates',   label: 'Student Certificates' },
   { id: 'staff_certificates',     label: 'Staff Certificates' },
   { id: 'appraisal_letters',      label: 'Appraisal Letters' },
