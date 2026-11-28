@@ -715,8 +715,21 @@ function openInvReportWindow(html, toast, format = 'pdf', filename = 'Report.doc
 }
 
 /* A4 invoice for a sale */
+/* Student sale ka account summary (slip par): paid now, is invoice ka baqi,
+   pichla baqaya, aur kul baqaya. Walk-in / purani sale (paid ya prevCredit
+   ka pata nahi) → null, slip pehle jaisi. */
+function posSaleAccount(sale) {
+  if (!sale || !sale.student || sale.paid == null) return null;
+  const paid = Number(sale.paid) || 0;
+  const balance = Math.max(0, (sale.total || 0) - paid);
+  const prev = sale.prevCredit == null ? null : Math.max(0, Number(sale.prevCredit) || 0);
+  if (balance === 0 && !prev) return null;      // poori payment, koi purana baqaya nahi
+  return { paid, balance, prev, totalDue: prev == null ? null : prev + balance };
+}
+
 function buildA4InvoiceHTML(sale, school) {
   const esc = (s) => String(s ?? '').replace(/[<>&"']/g, m => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;', "'": '&#39;' }[m]));
+  const acc  = posSaleAccount(sale);
   const qty  = sale.lines.reduce((a, l) => a + l.qty, 0);
   const sub  = sale.subtotal != null ? sale.subtotal : sale.lines.reduce((a, l) => a + l.price * l.qty, 0);
   const disc = sale.discount || 0;
@@ -745,6 +758,16 @@ function buildA4InvoiceHTML(sale, school) {
         <tr class="tot"><td colspan="2">Total</td><td class="c">${qty}</td><td class="r"></td><td class="r">Rs ${fmtMoney(sale.total)}</td></tr>
       </tfoot>
     </table>
+    ${acc ? `
+    <div style="font-size:11px;font-weight:800;color:#1E3A8A;margin:16px 0 6px">Student Shop Credit</div>
+    <table class="tbl" style="width:60%;margin-left:auto">
+      <tbody>
+        <tr><td>Paid now</td><td class="r">Rs ${fmtMoney(acc.paid)}</td></tr>
+        <tr><td>Balance on this invoice</td><td class="r">Rs ${fmtMoney(acc.balance)}</td></tr>
+        ${acc.prev != null ? `<tr><td>Previous outstanding</td><td class="r">Rs ${fmtMoney(acc.prev)}</td></tr>` : ''}
+      </tbody>
+      ${acc.totalDue != null ? `<tfoot><tr class="tot"><td>Total outstanding</td><td class="r">Rs ${fmtMoney(acc.totalDue)}</td></tr></tfoot>` : ''}
+    </table>` : ''}
     <div style="margin-top:14px;font-size:11px;color:#555">Thank you for your purchase. Please keep this receipt for your records.</div>
     <div class="rfoot">Generated on ${invFmtDate(todayISO())} · School Mentor ERP — POS</div>`;
 }
@@ -768,6 +791,7 @@ function openThermalPrintWindow(sale, school, toast) {
   const qty  = sale.lines.reduce((a, l) => a + l.qty, 0);
   const sub  = sale.subtotal != null ? sale.subtotal : sale.lines.reduce((a, l) => a + l.price * l.qty, 0);
   const disc = sale.discount || 0;
+  const acc  = posSaleAccount(sale);
   const lines = sale.lines.map(l => `
     <div class="ti">
       <div class="tn">${esc(l.name)}</div>
@@ -788,6 +812,12 @@ function openThermalPrintWindow(sale, school, toast) {
     <div class="tt"><span>Subtotal (${qty} item${qty !== 1 ? 's' : ''})</span><span>Rs ${fmtMoney(sub)}</span></div>
     ${disc > 0 ? `<div class="tt"><span>Discount${sale.discType === 'pct' ? ` (${sale.discInput}%)` : ''}</span><span>– Rs ${fmtMoney(disc)}</span></div>` : ''}
     <div class="tt g"><span>TOTAL</span><span>Rs ${fmtMoney(sale.total)}</span></div>
+    ${acc ? `
+    <hr class="hr">
+    <div class="tt"><span>Paid now</span><span>Rs ${fmtMoney(acc.paid)}</span></div>
+    <div class="tt"><span>Balance (this bill)</span><span>Rs ${fmtMoney(acc.balance)}</span></div>
+    ${acc.prev != null ? `<div class="tt"><span>Previous outstanding</span><span>Rs ${fmtMoney(acc.prev)}</span></div>` : ''}
+    ${acc.totalDue != null ? `<div class="tt g"><span>TOTAL DUE</span><span>Rs ${fmtMoney(acc.totalDue)}</span></div>` : ''}` : ''}
     <hr class="hr">
     <div class="foot">Thank you for your purchase!<br>Generated on ${invFmtDate(todayISO())}<br>School Mentor ERP — POS</div>`;
   w.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Receipt ${esc(sale.no)}</title><style>${css}</style></head><body><div class="slip">${inner}</div></body></html>`);
@@ -891,7 +921,7 @@ export default function Inventory({ toast }) {
    ═══════════════════════════════════════════════════════════════════ */
 function InventoryManagement({ toast }) {
   const itemsQ = useAsync(inventoryService.getInvItems, []);
-  const reloadItems = itemsQ.refetch;
+  const reloadItems = () => { inventoryService.invalidateInvReads('items'); return itemsQ.refetch(); };
   const { data: categories = [] }  = useAsync(inventoryService.getInvCategories, []);
   const { data: school = {} }      = useAsync(inventoryService.getInvSchool, {});
 
@@ -2212,8 +2242,8 @@ const POS_SUBTABS = [
 function PointOfSale({ toast }) {
   const productsQ = useAsync(inventoryService.getInvProducts, []);
   const salesQ    = useAsync(inventoryService.getInvSales, []);
-  const reloadProducts = productsQ.refetch;
-  const reloadSales    = salesQ.refetch;
+  const reloadProducts = () => { inventoryService.invalidateInvReads('products'); return productsQ.refetch(); };
+  const reloadSales    = () => { inventoryService.invalidateInvReads('sales');    return salesQ.refetch(); };
   const { data: school = {} } = useAsync(inventoryService.getInvSchool, {});
 
   /* Local mirrors that re-sync on every fetch/refetch (server is the source
@@ -2232,7 +2262,7 @@ function PointOfSale({ toast }) {
 
   const productList = useMemo(() => products || [], [products]);
   /* Wallets (Accounts) money is received into, students for Bill To, and the credit ledger. */
-  const { data: finAccounts = [] } = useAsync(accountsService.getFinAccounts, []);
+  const { data: finAccounts = [], loading: walletsLoading } = useAsync(accountsService.getFinAccounts, []);
   const walletName = (id) => (finAccounts.find(a => a.id === id) || {}).name || '';
   const { data: stuClasses = [] } = useAsync(studentService.getStuClasses, []);
   const students = useMemo(() => posFlattenStudents(stuClasses), [stuClasses]);
@@ -2243,7 +2273,7 @@ function PointOfSale({ toast }) {
   /* Student credit — server (/student-credit/by-branch): one row per student,
      all their credit sales merged. */
   const creditQ = useAsync(inventoryService.getStudentCredits, []);
-  const reloadCredits = creditQ.refetch;
+  const reloadCredits = () => { inventoryService.invalidateInvReads('credits'); return creditQ.refetch(); };
   const creditLoad = { loading: creditQ.data === undefined && !creditQ.error, error: creditQ.data === undefined ? creditQ.error : null, retry: reloadCredits };
   const { ledger, receipts: creditReceipts } = useMemo(
     () => posLedgerFromServer(creditQ.data || [], saleList, students, finAccounts),
@@ -2322,7 +2352,11 @@ function PointOfSale({ toast }) {
 
     const no = saleId ? `RCP-${saleId}` : 'RCP';
     const wallet = walletForSale;
+    /* Is sale se PEHLE student ka baqaya — slip par "Previous outstanding" +
+       "Total outstanding" ke liye (pehle sirf is sale ka total chhapta tha). */
+    const prevCredit = student ? (ledger.byReg[student.reg]?.outstanding || 0) : 0;
     const sale = {
+      ...(student ? { prevCredit } : {}),
       no, date: todayISO(), buyer: student ? posStudentLabel(student) : (buyer.trim() || 'Walk-in'),
       by: 'Front Desk',
       ...(student ? { student } : {}),
@@ -2416,6 +2450,7 @@ function PointOfSale({ toast }) {
           products={productList}
           load={productsLoad}
           accounts={finAccounts}
+          walletsLoading={walletsLoading}
           students={students}
           creditByReg={ledger.byReg}
           school={school}
@@ -2438,6 +2473,7 @@ function PointOfSale({ toast }) {
           ledger={ledger}
           load={creditLoad}
           accounts={finAccounts}
+          walletsLoading={walletsLoading}
           sales={saleList}
           receipts={creditReceipts}
           school={school}
@@ -2481,7 +2517,7 @@ function PosLoadState({ load, what = 'data', table = 0 }) {
 const posIsLoaded = (load) => !load || (!load.loading && !load.error);
 
 /* ─── New Sale subtab ─── */
-function PosSellView({ products, load, accounts = [], students = [], creditByReg = {}, school, onFinalizeSale, onPrintSale, toast }) {
+function PosSellView({ products, load, accounts = [], walletsLoading = false, students = [], creditByReg = {}, school, onFinalizeSale, onPrintSale, toast }) {
   const [search, setSearch]     = useState('');
   /* Products added but still awaiting approval (no real row yet). They show
      in the search dropdown with a Pending tag so the seller can see them,
@@ -2784,6 +2820,7 @@ function PosSellView({ products, load, accounts = [], students = [], creditByReg
         <PosCheckoutModal
           cart={cart}
           accounts={accounts}
+          walletsLoading={walletsLoading}
           buyer={billTo === 'student' && student ? posStudentLabel(student) : (buyer.trim() || 'Walk-in')}
           student={billTo === 'student' ? student : null}
           existingCredit={billTo === 'student' && student ? (creditByReg[student.reg]?.outstanding || 0) : 0}
@@ -2803,7 +2840,7 @@ function PosSellView({ products, load, accounts = [], students = [], creditByReg
 }
 
 /* ─── Checkout modal (summary + A4/Thermal picker) ─── */
-function PosCheckoutModal({ cart, accounts = [], buyer, student, existingCredit = 0, subtotal, discAmount, discType, discInput, total, itemCount, onClose, onConfirm, onPrint }) {
+function PosCheckoutModal({ cart, accounts = [], walletsLoading = false, buyer, student, existingCredit = 0, subtotal, discAmount, discType, discInput, total, itemCount, onClose, onConfirm, onPrint }) {
   const [fmt, setFmt] = useState('a4');
   /* saving → API call chal rahi hai; done → saved sale (success screen);
      printReady → thodi der baad Print button (pehle user "saved" dekh le). */
@@ -2829,6 +2866,10 @@ function PosCheckoutModal({ cart, accounts = [], buyer, student, existingCredit 
   const creditInvalid = payMode === 'credit' && (paidInput === '' || Number(paidInput) < 0 || Number(paidInput) >= total);
   /* Student chuna hai magar uski ID nahi aayi → API studentID ke baghair sale nahi le sakti. */
   const studentNoId = !!student && !student.id;
+  /* Paisa abhi liya ja raha hai magar branch me koi active wallet nahi → backend
+     "Wallet not found for this branch" deta tha aur button "kaam nahi karta"
+     lagta tha. Ab pehle hi rok kar saaf batate hain. */
+  const noWallet = paidNow > 0 && !walletsLoading && posActiveWallets(accounts).length === 0;
 
   useEffect(() => {
     const onKey = (e) => { if (e.key === 'Escape' && !savingRef.current) onClose(); };
@@ -2866,6 +2907,11 @@ function PosCheckoutModal({ cart, accounts = [], buyer, student, existingCredit 
                 <div><span>Paid now</span><strong>Rs {fmtMoney(done.paid == null ? done.total : done.paid)}</strong></div>
                 {owes > 0 && <div className="amber"><span>On credit</span><strong>Rs {fmtMoney(owes)}</strong></div>}
               </div>
+              {done.student && (done.prevCredit || 0) > 0 && (
+                <div className="pos-credit-note" style={{ marginTop: 10, textAlign: 'left' }}>
+                  <i className="fa-solid fa-circle-info"></i> Previous outstanding Rs {fmtMoney(done.prevCredit)} — <strong>total due now Rs {fmtMoney(done.prevCredit + owes)}</strong>. This is printed on the invoice.
+                </div>
+              )}
             </div>
           </div>
           <div className="fee-modal-foot">
@@ -2981,6 +3027,12 @@ function PosCheckoutModal({ cart, accounts = [], buyer, student, existingCredit 
           {studentNoId && (
             <div className="pos-credit-note red" style={{ marginTop: 10 }}><i className="fa-solid fa-triangle-exclamation"></i> This student's record has no ID, so the sale can't be saved against them. Reload the page or choose the student again.</div>
           )}
+          {noWallet && (
+            <div className="pos-credit-note red" style={{ marginTop: 10 }}>
+              <i className="fa-solid fa-triangle-exclamation"></i> No active wallet is set up for this branch, so the money received can't be recorded.
+              Add a wallet in <strong>Accounts → Wallets</strong> first{student ? <>, or choose <strong>Partial / Credit</strong> with Rs 0 received now</> : ''}.
+            </div>
+          )}
 
           {paidNow > 0 && (
             <div className="pos-wallet-box">
@@ -3026,7 +3078,7 @@ function PosCheckoutModal({ cart, accounts = [], buyer, student, existingCredit 
           <Tooltip text="Save the sale — you can print the invoice right after">
             <button
               className="fee-btn fee-btn-primary inv-confirm-sale"
-              disabled={creditInvalid || studentNoId || saving}
+              disabled={creditInvalid || studentNoId || noWallet || walletsLoading || saving}
               onClick={confirmSale}
             >
               {saving
@@ -3043,6 +3095,7 @@ function PosCheckoutModal({ cart, accounts = [], buyer, student, existingCredit 
 
 /* ─── Bill To (optional): walk-in buyer, or a student from the Students
    module — search by name, father name, reg / admission no. or class. ─── */
+const POS_STUDENT_LIST_MAX = 500;
 function PosBillTo({ billTo, setBillTo, buyer, setBuyer, student, setStudent, students, creditByReg }) {
   const [q, setQ]       = useState('');
   const [open, setOpen] = useState(false);
@@ -3052,7 +3105,13 @@ function PosBillTo({ billTo, setBillTo, buyer, setBuyer, student, setStudent, st
     if (!open) return;
     const onClick = (e) => { if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false); };
     document.addEventListener('mousedown', onClick);
-    return () => document.removeEventListener('mousedown', onClick);
+    /* List ab search ke neeche cart ke andar khulti hai — cart ko itna scroll
+       karo ke list nazar aaye. */
+    const t = setTimeout(() => {
+      const list = wrapRef.current && wrapRef.current.querySelector('.pos-stu-results');
+      if (list && list.scrollIntoView) list.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }, 30);
+    return () => { clearTimeout(t); document.removeEventListener('mousedown', onClick); };
   }, [open]);
 
   const results = useMemo(() => {
@@ -3060,7 +3119,13 @@ function PosBillTo({ billTo, setBillTo, buyer, setBuyer, student, setStudent, st
     const list = t
       ? students.filter(s => `${s.name} ${s.father} ${s.reg} ${s.adm} ${s.cls} ${s.sec} ${s.cls}-${s.sec} ${s.cls} ${s.sec}`.toLowerCase().includes(t))
       : students;
-    return list.slice(0, 8);
+    /* Pehle slice(0, 8) — sirf 8 students dikhte the. Ab sab (list scroll hoti
+       hai); bohat bare school ke liye 500 ki hadd, baqi search se milte hain. */
+    return list.slice(0, POS_STUDENT_LIST_MAX);
+  }, [students, q]);
+  const totalMatches = useMemo(() => {
+    const t = q.toLowerCase().trim();
+    return t ? students.filter(s => `${s.name} ${s.father} ${s.reg} ${s.adm} ${s.cls} ${s.sec} ${s.cls}-${s.sec}`.toLowerCase().includes(t)).length : students.length;
   }, [students, q]);
 
   const owes = (reg) => creditByReg[reg]?.outstanding || 0;
@@ -3110,8 +3175,15 @@ function PosBillTo({ billTo, setBillTo, buyer, setBuyer, student, setStudent, st
           </div>
           {open && (
             <div className="inv-pos-searchresults open pos-stu-results">
+              {students.length > 0 && results.length > 0 && (
+                <div className="pos-stu-count">
+                  {results.length < totalMatches
+                    ? `Showing ${results.length} of ${totalMatches} — type to narrow down`
+                    : `${totalMatches} student${totalMatches !== 1 ? 's' : ''}`}
+                </div>
+              )}
               {results.length === 0 ? (
-                <div className="inv-pos-sr-item" style={{ cursor: 'default', color: 'var(--text-muted)' }}>No student found</div>
+                <div className="inv-pos-sr-item" style={{ cursor: 'default', color: 'var(--text-muted)' }}>{students.length ? 'No student found' : <><Spinner size={14} /> Loading students…</>}</div>
               ) : results.map(st => (
                 <div key={st.reg} className="inv-pos-sr-item" onClick={() => { setStudent(st); setQ(''); setOpen(false); }}>
                   <div className="pos-stu-av sm">{posInitials(st.name)}</div>
@@ -3136,7 +3208,7 @@ function PosBillTo({ billTo, setBillTo, buyer, setBuyer, student, setStudent, st
    for the full credit history; receive a payment at any time; two
    reports: Outstanding Credit and Credit Recovery (receipts).
    ═══════════════════════════════════════════════════════════════════ */
-function PosCreditsView({ ledger, load, accounts = [], sales, receipts, school, onReceive, toast }) {
+function PosCreditsView({ ledger, load, accounts = [], walletsLoading = false, sales, receipts, school, onReceive, toast }) {
   const [q, setQ]           = useState('');
   const [cls, setCls]       = useState('');
   const [status, setStatus] = useState('outstanding'); // outstanding | cleared | all
@@ -3346,6 +3418,7 @@ function PosCreditsView({ ledger, load, accounts = [], sales, receipts, school, 
         <PosReceiveCreditModal
           row={receiveRow}
           accounts={accounts}
+          walletsLoading={walletsLoading}
           onClose={() => setReceiveReg(null)}
           onSubmit={async (payload) => { const rec = await onReceive({ student: receiveRow.student, ...payload }); if (rec) setReceiveReg(null); }}
         />
@@ -3514,7 +3587,7 @@ function PosCreditHistoryModal({ row, school, toast, onClose, onReceive }) {
 }
 
 /* ─── Receive a payment against a student's credit ─── */
-function PosReceiveCreditModal({ row, accounts = [], onClose, onSubmit }) {
+function PosReceiveCreditModal({ row, accounts = [], walletsLoading = false, onClose, onSubmit }) {
   const st = row.student;
   const [amount, setAmount] = useState(String(row.outstanding));
   const [date, setDate]     = useState(todayISO());
@@ -3531,7 +3604,8 @@ function PosReceiveCreditModal({ row, accounts = [], onClose, onSubmit }) {
   }, [onClose]);
 
   const amt = Number(amount) || 0;
-  const invalid = amt <= 0 || amt > row.outstanding || !date;
+  const noWallet = !walletsLoading && posActiveWallets(accounts).length === 0;
+  const invalid = amt <= 0 || amt > row.outstanding || !date || noWallet || walletsLoading;
   const after = Math.max(0, row.outstanding - amt);
   /* which open invoices this payment settles (oldest first) */
   let pool = amt;
@@ -3599,6 +3673,9 @@ function PosReceiveCreditModal({ row, accounts = [], onClose, onSubmit }) {
 
           {amt > row.outstanding && (
             <div className="pos-credit-note red" style={{ marginTop: 12 }}><i className="fa-solid fa-triangle-exclamation"></i> Amount is more than the outstanding Rs {fmtMoney(row.outstanding)}.</div>
+          )}
+          {noWallet && (
+            <div className="pos-credit-note red" style={{ marginTop: 12 }}><i className="fa-solid fa-triangle-exclamation"></i> No active wallet is set up for this branch. Add a wallet in <strong>Accounts → Wallets</strong> first, then receive the payment.</div>
           )}
           {!invalid && settles.length > 0 && (
             <div className="pos-credit-note" style={{ marginTop: 12 }}>
@@ -5153,9 +5230,12 @@ textarea.fee-input { height: auto; padding: 10px 14px; resize: vertical; line-he
   border-bottom: 1px solid var(--border-light);
   overflow: hidden;
 }
+.inv-card-img:has(img) { background: #fff; }
 .inv-card-img img {
   width: 100%; height: 100%;
-  object-fit: cover;
+  object-fit: contain;          /* poori photo — crop nahi (pehle cover) */
+  padding: 8px;
+  box-sizing: border-box;
   transition: transform .35s ease;
 }
 .inv-card-img > i {
@@ -5495,7 +5575,10 @@ textarea.fee-input { height: auto; padding: 10px 14px; resize: vertical; line-he
   color: var(--brand-primary);
   overflow: hidden;
 }
-.inv-pos-prod-img img { width: 100%; height: 100%; object-fit: cover; }
+/* Product photo poori dikhe (packet / book cover kate nahi): contain + white
+   matte. Pehle cover tha → upar-neeche se crop ho jati thi. */
+.inv-pos-prod-img:has(img) { height: 110px; background: #fff; }
+.inv-pos-prod-img img { width: 100%; height: 100%; object-fit: contain; padding: 6px; box-sizing: border-box; }
 .inv-pos-prod-body {
   padding: 9px 11px;
   flex: 1;
@@ -5553,11 +5636,19 @@ textarea.fee-input { height: auto; padding: 10px 14px; resize: vertical; line-he
   border-radius: 16px;
   background: var(--bg-card);
   box-shadow: 0 2px 10px rgba(15,23,42,.06);
-  overflow: hidden;
+  /* Bill To + Discount + Totals se footer lamba ho jata tha aur overflow:hidden
+     Close Sale button ko kaat deta tha. Ab poora cart scroll hota hai, items
+     ki apni limit hai, aur Close Sale button neeche chipka (sticky) rehta hai. */
+  overflow-x: hidden;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   max-height: calc(100vh - 40px);
 }
+.inv-cart > .inv-cart-head { position: sticky; top: 0; z-index: 2; background: var(--bg-card); }
+.inv-cart > .inv-cart-items { flex: 0 1 auto; max-height: 38vh; }
+.inv-cart > .inv-cart-foot { flex-shrink: 0; }
+.inv-cart-foot .inv-cart-closebtn { position: sticky; bottom: 10px; z-index: 2; }
 .inv-cart-head {
   padding: 14px 16px;
   border-bottom: 1px solid var(--border-light);
@@ -6684,7 +6775,11 @@ textarea.fee-input { height: auto; padding: 10px 14px; resize: vertical; line-he
 .pos-billto-seg { display: flex; gap: 4px; padding: 3px; border-radius: 10px; background: var(--bg-muted, #F1F5F9); border: 1px solid var(--border-light, #E2E8F0); }
 .pos-billto-seg button { flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 7px 10px; border: none; border-radius: 8px; background: transparent; color: var(--text-muted, #64748B); font: inherit; font-size: 12.5px; font-weight: 700; cursor: pointer; }
 .pos-billto-seg button.active { background: var(--bg-card, #fff); color: var(--brand-solid, #1E40AF); box-shadow: 0 1px 4px rgba(15,23,42,.12); }
-.pos-stu-results { top: auto !important; bottom: calc(100% + 6px); max-height: 300px; overflow-y: auto; z-index: 40; }
+/* Student list cart ke ANDAR, search box ke neeche (in-flow). Pehle ye upar ki
+   taraf absolute khulti thi; cart scroll container bana (Close Sale fix) to
+   list cart ki hadd par kat jati thi. In-flow list kabhi clip nahi hoti. */
+.pos-stu-results { position: static !important; top: auto !important; bottom: auto !important; margin-top: 6px; max-height: 280px; overflow-y: auto; box-shadow: 0 6px 18px rgba(15,23,42,.10); }
+.pos-stu-count { position: sticky; top: 0; z-index: 1; padding: 6px 12px; font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .4px; color: var(--text-muted, #64748B); background: var(--bg-muted, #F1F5F9); border-bottom: 1px solid var(--border-light, #E2E8F0); }
 .pos-stu-card { display: flex; align-items: flex-start; gap: 10px; margin-top: 8px; padding: 10px 12px; border-radius: 12px; border: 1.5px solid rgba(var(--brand-primary-rgb, 59,130,246), .35); background: rgba(var(--brand-primary-rgb, 59,130,246), .06); }
 .pos-stu-av { width: 38px; height: 38px; border-radius: 50%; flex-shrink: 0; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 800; color: #fff; background: var(--brand-gradient, linear-gradient(135deg,#1E3A8A,#2563EB)); }
 .pos-stu-av.sm { width: 32px; height: 32px; font-size: 11.5px; }

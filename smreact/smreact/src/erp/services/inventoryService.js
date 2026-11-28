@@ -79,6 +79,29 @@ const nz    = (v, fallback = '-') => {
   return s || fallback;
 };
 
+/* ─── Short read cache ───
+   Page load par ek hi data kai jagah se maanga jata tha (items 2× + categories
+   andar se items 2× dobara, dev StrictMode har effect double) → /manage ~10×.
+   Ab same key ki request ek hi baar jaati hai (in-flight share + 20s reuse).
+   Har write (save/delete/sale/receive) apni key saaf karta hai → refetch taaza. */
+const READ_TTL = 20000;
+const readCache = new Map();
+function cachedRead(key, fn) {
+  const k = `${branchId()}:${key}`;
+  const hit = readCache.get(k);
+  if (hit && Date.now() - hit.t < READ_TTL) return hit.p;
+  const p = fn().catch((e) => { readCache.delete(k); throw e; });
+  readCache.set(k, { t: Date.now(), p });
+  return p;
+}
+function invalidateReads(...keys) {
+  [...readCache.keys()].forEach((k) => {
+    if (keys.some((key) => k.endsWith(`:${key}`))) readCache.delete(k);
+  });
+}
+/* Explicit reload (Retry / refresh / approval aaya) → cache chhod kar taaza. */
+export function invalidateInvReads(...keys) { invalidateReads(...keys); }
+
 async function readJson(url) {
   const res  = await fetch(buildUrl(url), { headers: authHeaders() });
   const json = await res.json().catch(() => null);
@@ -175,6 +198,9 @@ function mapSale(r) {
    Server har call sirf usi status ki rows deta hai; id par dedupe taake
    kabhi overlap ho to item double na ho. */
 export async function getInvItems() {
+  return (await cachedRead('items', fetchInvItems)).slice();
+}
+async function fetchInvItems() {
   const [activeJson, inactiveJson] = await Promise.all([
     postJson('manage', inventoryBody({ active: true },  { action: 'get', isPOS: false }), 'Could not load inventory items'),
     postJson('manage', inventoryBody({ active: false }, { action: 'get', isPOS: false }), 'Could not load inventory items'),
@@ -188,6 +214,9 @@ export async function getInvItems() {
    (isActive:true). Pehle GET /list?isPos=true use hoti thi; usay hata diya
    (items ki tarah ab sab kuch manage/get par unified hai). */
 export async function getInvProducts() {
+  return (await cachedRead('products', fetchInvProducts)).slice();
+}
+async function fetchInvProducts() {
   /* Products bhi items jaise branch-level: branchID = branch, networkID = null,
      action:get isPOS:true, sirf active. */
   const json = await postJson(
@@ -199,8 +228,10 @@ export async function getInvProducts() {
 }
 
 export async function getInvSales() {
-  const json = await readJson(`${BASE}/list-sales?branchId=${branchId()}`);
-  return (json.data || []).map(mapSale);
+  return (await cachedRead('sales', async () => {
+    const json = await readJson(`${BASE}/list-sales?branchId=${branchId()}`);
+    return (json.data || []).map(mapSale);
+  })).slice();
 }
 
 /* Category options for the add/edit pickers (input choices, not stored data).
@@ -282,26 +313,30 @@ function inventoryBody(p, { action, isPOS }) {
 
 /* Inventory item — add (no id) / edit (id) / soft toggle (pass active). */
 export async function saveInvItem(item) {
+  invalidateReads('items');
   const action = item.id ? 'update' : 'insert';
-  return postJson('manage', inventoryBody(item, { action, isPOS: false }), 'Could not save item');
+  return postJson('manage', inventoryBody(item, { action, isPOS: false }), 'Could not save item').finally(() => invalidateReads('items'));
 }
 
 /* Permanent delete of an inventory item (action=delete on manage). */
 export async function deleteInvItem(item) {
+  invalidateReads('items');
   const body = inventoryBody({ ...item, active: false }, { action: 'delete', isPOS: false });
-  return postJson('manage', body, 'Could not delete item');
+  return postJson('manage', body, 'Could not delete item').finally(() => invalidateReads('items'));
 }
 
 /* Shop product — add / edit. Branch-level (items jaisa): branchID = branch,
    networkID = null. Barcode asli value jata hai (isPOS true). */
 export async function saveInvProduct(product) {
+  invalidateReads('products');
   const action = product.id ? 'update' : 'insert';
-  return postJson('manage', inventoryBody(product, { action, isPOS: true }), 'Could not save product');
+  return postJson('manage', inventoryBody(product, { action, isPOS: true }), 'Could not save product').finally(() => invalidateReads('products'));
 }
 
 export async function deleteInvProduct(product) {
+  invalidateReads('products');
   const body = inventoryBody({ ...product, active: false }, { action: 'delete', isPOS: true });
-  return postJson('manage', body, 'Could not delete product');
+  return postJson('manage', body, 'Could not delete product').finally(() => invalidateReads('products'));
 }
 
 /* Record a POS sale. `cart` lines carry { id, name, price, qty, cat?, barcode? }.
@@ -356,7 +391,9 @@ export async function saveInvSale({
       createdBy:       userId(),
     })),
   };
-  return postJson('save', body, 'Could not save sale');
+  /* Sale stock ghatati hai + credit badalta hai → teeno taaza laao. */
+  invalidateReads('products', 'sales', 'credits');
+  return postJson('save', body, 'Could not save sale').finally(() => invalidateReads('products', 'sales', 'credits'));
 }
 
 
@@ -372,6 +409,9 @@ export async function saveInvSale({
             saleMasterID empty → later credit payment (/receive)
      POST /api/student-credit/receive  (StudentCreditReceiveRequest) */
 export async function getStudentCredits() {
+  return (await cachedRead('credits', fetchStudentCredits)).slice();
+}
+async function fetchStudentCredits() {
   const res  = await fetch(buildUrl(`/api/student-credit/by-branch/${branchId()}`), { headers: authHeaders() });
   const json = await res.json().catch(() => null);
   if (!res.ok || json?.success === false) throw new Error(apiMessage(json) || 'Could not load student credit');
@@ -379,6 +419,7 @@ export async function getStudentCredits() {
 }
 
 export async function receiveStudentCredit({ studentId, amount, date, walletId, method, note }) {
+  invalidateReads('credits');
   const res = await fetch(buildUrl('/api/student-credit/receive'), {
     method: 'POST',
     headers: authHeaders(),
@@ -394,6 +435,7 @@ export async function receiveStudentCredit({ studentId, amount, date, walletId, 
     }),
   });
   const json = await res.json().catch(() => null);
+  invalidateReads('credits');
   if (!res.ok || json?.success === false) throw new Error(apiMessage(json) || 'Could not save the credit payment');
   return json;
 }
